@@ -22,7 +22,7 @@ class LogConfig:
         )
 
         logger.add(
-            cls.LOG_DIR / "logs/rag_assistant.log",
+            cls.LOG_DIR / "{time:YYYY-MM-DD}_rag_assistant.log",
             rotation="10 MB",
             retention="7 days",
             level="INFO",
