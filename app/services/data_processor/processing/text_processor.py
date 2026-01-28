@@ -118,7 +118,7 @@ class TextProcessor:
     def create_model(self):
         return ChatOllama(model=self.model_name, temperature=0, keep_alive=0)
 
-    def new_document_stats(self, text, document_name):
+    def new_document_stats(self, text, document_path):
         """
         Установка данных для обработки нового документа.
         """
@@ -130,15 +130,15 @@ class TextProcessor:
         self.bad_words_count = 0
 
         self.text_chunks = text
-        self.document_name = document_name
+        self.document_name = Path(document_path).name
 
         self.process_document_data = {
             'total_words_count': 0,
             'uncorrected_words_count': 0,
             'corrected_words_count': 0,
-            'uncorrected_chunks': 0,
+            'uncorrected_chunks': [],
             'total_chunks_with_bad_words': 0,
-            'result_document_name': f"{Path(document_name).stem}_text_processed_json.txt",
+            'result_document_name': f"{Path(self.document_name).stem}_text_processed_json.txt",
             'need_save': self.need_output_file,
             'total_time': 0
         }
@@ -196,15 +196,11 @@ class TextProcessor:
             except json.JSONDecodeError as e:
                 log.error(f"Некорректный ответ для чанка {chunk_id}. Осталось повторных попыток {self.max_retries - attempt}")
                 if attempt == self.max_retries:
-                    self.bad_words_count += self.bad_chunks_status.get(chunk_id, {}).get('words_count', 0)
-                    self.bad_chunks.append(chunk_id)
                     return None
 
             except Exception as e:
                 log.error(f"Ошибка обработки чанка {chunk_id}: {e}.\nОсталось повторных попыток {self.max_retries - attempt}")
                 if attempt == self.max_retries:
-                    self.bad_words_count += self.bad_chunks_status.get(chunk_id, {}).get('words_count', 0)
-                    self.bad_chunks.append(chunk_id)
                     return None
         return None
 
@@ -249,6 +245,7 @@ class TextProcessor:
         if bad_words:
             return False
 
+        data["status"] = "done"
         return True
 
     def insert_data(self, chunk_index, chunk_id):
@@ -258,9 +255,12 @@ class TextProcessor:
         data = self.bad_chunks_status[chunk_id]
 
         self.text_chunks[chunk_index]['text'] = data['vlm_res']
-        data["status"] = "done"
 
     def update_stats(self, total_time):
+        for index, chunk_id, text in self.one_chunk_fragments:
+            self.bad_words_count += self.bad_chunks_status[chunk_id]['words_count']
+            self.bad_chunks.append(chunk_id)
+
         self.process_document_data['total_words_count'] = self.total_words_count
         self.process_document_data['uncorrected_words_count'] = self.bad_words_count
         self.process_document_data['corrected_words_count'] = self.total_words_count - self.bad_words_count
@@ -280,13 +280,15 @@ class TextProcessor:
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(self.text_chunks, f, ensure_ascii=False, indent=4, default=str)
 
-        log.info(f"Результат предварительной обработки сохранен в {output_path}")
+        log.info(f"Результат обработки сохранен в {output_path}")
+
 
     @log.catch
-    def process(self, chunks, document_name):
-        log.info(f'Обработка текста для документа {document_name}')
+    def process(self, chunks, document_path):
+        self.new_document_stats(text=chunks, document_path=document_path)
+
+        log.info(f'Обработка текста для документа {self.document_name}')
         start_time = time()
-        self.new_document_stats(text=chunks, document_name=document_name)
         # Поиск чанков со словами со смешанным языком
         self.check_words()
 
@@ -294,11 +296,7 @@ class TextProcessor:
         for attempt in range(self.max_retries):
             for index, chunk_id, text in tqdm(self.one_chunk_fragments, 'Обработка чанков со смешанными словами'):
                 self.correct_words_via_vlm(chunk_id, text)
-                is_valid = self.validate_chunk(chunk_id)
-
-                if not is_valid:
-                    continue
-
+                self.validate_chunk(chunk_id)
                 self.insert_data(chunk_index=index, chunk_id=chunk_id)
 
             all_done = True
@@ -319,7 +317,7 @@ class TextProcessor:
             else:
                 log.warn(f"Остались неисправленные чанки. Еще повторных попыток {self.max_retries - attempt}")
         else:
-            log.error("Достигнуто максимальное количество попыток, но не все чанки исправлены.")
+            log.error("Достигнуто максимальное количество попыток, но не все чанки исправлены")
             # Сохранение данных в файл
             if self.need_output_file:
                 self.save_final_document()
