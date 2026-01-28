@@ -31,8 +31,8 @@ class FormulaOutput(BaseModel):
         schema_extra = {
             "example": {
                 "fragments": [
-                    {"scr": "FRAGMENT_1", "type": "formula", "answer": "f(x) = x^2"},
-                    {"scr": "FRAGMENT_2", "type": "text", "answer": "граф"}
+                    {"scr": "FRAGMENT_1", "type": "formula", "answer": "(v_1, v_2, \\dots, v_{n-1}, v_n = v_1)"},
+                    {"scr": "FRAGMENT_2", "type": "text", "answer": "сложность алгоритма"}
                 ]
             }
         }
@@ -103,12 +103,13 @@ class FormulaProcessor:
                 "Ты — редактор математического учебника, выполняющий исправление ошибок распознавания текста с "
                 "использованием изображения. Тебе даны: изображение фрагмента учебника и распознанный текст этого "
                 "фрагмента, содержащий некоторые пропуски. С помощью изображения определи содержание пропущенного "
-                "фрагмента. Фрагменты из символов, обозначающих математические понятия (переменные с индексами, "
-                "фрагменты c символами '=', '+' и другими, обозначения множеств, функций) "
-                "считай математическим текстом. В ответ передай для каждого фрагмента: тип - математическое выражение "
-                "(formula) или простой текст (text); answer - содержание фрагмента, формула в latex или текст для "
-                "обычных слов; scr - какому пропущенному фрагменту соответствует содержание. LaTex формулы пиши по всем "
-                "правилам: где нужен один \\ - пиши один, при переносе строк пиши \\\\. \n{format_instructions}."
+                "фрагмента. Типом text являются фрагменты, содержащие только корректные русско- или англоязычные слова. "
+                "Остальные фрагменты - formula. Если фрагмент содержит символы '=', '+', фигурные скобки {{}}, "
+                "обозначения функций, переменные с индексами, обозначения размеров (например n*n) то это только formula. "
+                "В ответ передай для каждого фрагмента: тип - математическое выражение (formula) или простой текст "
+                "(text); answer - содержание фрагмента, формула в latex или текст для обычных слов; scr - какому "
+                "пропущенному фрагменту соответствует содержание."
+                "\n{format_instructions}."
                 )),
                 ("human", [
                     {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,{image_base64}"}},
@@ -218,7 +219,7 @@ class FormulaProcessor:
                 except Exception:
                     pass
 
-    def correct_fragments_via_vlm(self, chunk_id, fragments_list, context, image_path):
+    def correct_fragments_via_vlm(self, chunk_id, context, image_path):
         image_b64 = self.load_image_as_base64(image_path)
 
         for attempt in range(self.max_retries):
@@ -229,7 +230,20 @@ class FormulaProcessor:
                     "format_instructions": self.parser.get_format_instructions()
                 })
 
+
+
                 for fragment in result.fragments:
+                    # Проверяем не назвала ли VLM формулу текстом
+                    if fragment['type'] == 'text':
+                        formula_patterns = [
+                            r'[={}\[\]\^\\_<>+]',
+                            r'\.\.\.',
+                            r'\\[a-zA-Z]+',
+                            r'^[a-zA-Z]$',
+                        ]
+                        is_formula = any(re.search(pattern, fragment['answer']) for pattern in formula_patterns)
+                        fragment['type'] = 'formula' if is_formula else 'text'
+
                     idx = int(fragment["scr"].split('_')[1]) - 1
                     if self.fixed_fragments[chunk_id]["mask"][idx] == 0:
                         self.fixed_fragments[chunk_id]["items"][idx] = fragment
@@ -272,7 +286,7 @@ class FormulaProcessor:
                 if is_valid:
                     data["mask"][i] = 1
 
-    @log.catch()
+    @log.catch
     def insert_fixed_fragments(self, chunk_index, chunk_id):
         data = self.fixed_fragments[chunk_id]
 
@@ -297,7 +311,7 @@ class FormulaProcessor:
             data["status"] = "done"
 
     def update_stats(self, total_time):
-        for index, chunk_id, text in self.one_chunk_fragments:
+        for index, chunk_id, fragments_list, context, image_path in self.one_chunk_fragments:
             self.process_document_data['uncorrected_chunks'].append(chunk_id)
             self.bad_fragments_count += self.fixed_fragments[chunk_id]['mask'].count(0)
 
@@ -328,7 +342,7 @@ class FormulaProcessor:
 
         for attempt in range(self.max_retries):
             for index, chunk_id, fragments_list, context, image_path in tqdm(self.one_chunk_fragments, 'Обработка чанков с формулами'):
-                self.correct_fragments_via_vlm(chunk_id, fragments_list, context, image_path)
+                self.correct_fragments_via_vlm(chunk_id, context, image_path)
                 self.validate_chunk(chunk_id)
                 self.insert_fixed_fragments(chunk_index=index, chunk_id=chunk_id)
 
@@ -347,7 +361,7 @@ class FormulaProcessor:
                 self.update_stats(time() - start_time)
                 return self.text_chunks
             else:
-                log.warn(f"Остались неисправленные чанки. Еще повторных попыток {self.max_retries - attempt}")
+                log.warning(f"Остались неисправленные чанки. Еще повторных попыток {self.max_retries - attempt}")
         else:
             log.error("Достигнуто максимальное количество попыток, но не все чанки исправлены")
             # Сохранение данных в файл
@@ -361,5 +375,6 @@ class FormulaProcessor:
 formula_processor = FormulaProcessor()
 
 if __name__ == "__main__":
-    chunks = [{'id': '0-0', 'block_type': 'Text', 'page': '0', 'bbox': [122.20401531382834, 68.2208293259197, 557.790106708517, 89.21185373389498], 'text': 'Заметим, что в ориентированном графе может быть ребро вида (u, u), называемое $nem.e\\ddot{u}$, а в неориентированном петель не бывает.'}, {'id': '0-1', 'block_type': 'Text', 'page': '0', 'bbox': [122.20401531382834, 98.20800705159868, 557.790106708517, 169.36459279060364], 'text': 'Пример 1. На рис. 1 приведены примеры ориентированного графа $G_1 = (V_1, E_1)$ и неориентированного графа $G_2 = (V_2, E_2)$. Здесь $V_1 = \\{a, e, c, d\\}, E_1 = \\{(a, b), (a, c), (b, b), (b, d), (d, a)\\},$ $V_2 = \\{a, b, c, d\\}, E_2 = \\{(a, b), (a, c), (a, d), (b, d)\\}$. В графе $G_1$ ребро (b, b) является петлей, полустепень исхода вершины а равна 2, а полустепень захода для нее равна 1. В графе $G_2$ степень вершины а равна 3, вершин b и d-2, вершины c-1, а вершины e-0, т.е. вершина е является изолированной,'}, {'id': '0-2', 'block_type': 'PictureGroup', 'page': '0', 'bbox': [112.77689862251282, 190.20630360245704, 491.065214911396, 310.3672894607775], 'text': 'Рис. 1: Ориентированный граф $G_1$ и неориентированный граф $G_2$'}, {'id': '0-3', 'block_type': 'Text', 'page': '0', 'bbox': [137.7738400697708, 324.611198880475, 323.8781264759131, 335.4405527114868], 'text': 'Части графов называются подграфами.'}, {'id': '0-4', 'block_type': 'Text', 'page': '0', 'bbox': [123.24073457717897, 341.85382607274045, 557.0403888231561, 365.09388881014166], 'text': 'Определение 2. Граф $G_1 = (V_1, E_1)$ называется подграфом графа G = (V, E), если $V_1 \\subseteq V$ и $E_1 \\subseteq E$.'}, {'id': '0-5', 'block_type': 'Text', 'page': '0', 'bbox': [122.07808613777162, 374.0900421278454, 557.790106708517, 408.20155495405197], 'text': 'Во многих приложениях с вершинами и ребрами графов связывается некоторая дополнительная информация. Обычно она представляется с помощью функций разметки вершин и ребер.'}, {'id': '0-6', 'block_type': 'Text', 'page': '0', 'bbox': [123.24073457717897, 417.57144983007987, 557.790106708517, 451.3070247714687], 'text': 'Определение 3. Размеченный граф — это ориентированный или неориентированный граф G=(V,E), снабженный одной или двумя функциями разметки вида: $l:V\\to M$ и $c:E\\to L$, где M и L — множества меток вершин и ребер, соответственно.'}, {'id': '0-7', 'block_type': 'Text', 'page': '0', 'bbox': [123.24073457717897, 452.8063836577527, 557.790106708517, 487.2916380422835], 'text': 'Упорядоченный граф — это размеченный граф G=(V,E), в котором ребра, выходящие из каждой вершины $v\\in V$, упорядочены, т.е. помечены номерами $1,\\ldots,k_v$, где $k_v$ — полустепень исхода v, т.е. $k_v=|\\{w\\mid (v,w)\\in E\\}|$.'}, {'id': '0-8', 'block_type': 'Text', 'page': '0', 'bbox': [122.95373319918924, 495.7614051103592, 557.0403888231561, 517.2788157679626], 'text': 'В качестве множества меток ребер L часто выступают числа, задающие "веса", "длины", "стоимости" ребер. Графы с такой разметкой часто называют взвешенными.'}, {'id': '0-9', 'block_type': 'Text', 'page': '0', 'bbox': [122.95373319918924, 520.2775335405304, 557.0403888231561, 543.4465817213058], 'text': 'Во многих задачах, использующих графы с разметкой ребер, удобно допускать несколько ребер между одной парой вершин.'}, {'id': '0-10', 'block_type': 'Text', 'page': '0', 'bbox': [122.20401531382834, 551.0143907093513, 557.0403888231561, 598.5311822891235], 'text': 'Определение 4. Ориентированный мультиграф – это пара (V, E), где V – конечное множество вершин (узлов, точек) графа, а множество ребер (дуг) E – это некоторое мультимножество пар вершин, т.е. множество, в которое каждый элемент (ребро) может входить несколько раз.'}, {'id': '0-11', 'block_type': 'Text', 'page': '0', 'bbox': [137.94809090640743, 604.9913106155735, 557.0403888231561, 616.2365022627032], 'text': 'Обычно "параллельные" ребра в размеченных мультиграфах различаются своими метками.'}, {'id': '0-12', 'block_type': 'Text', 'page': '0', 'bbox': [122.20401531382834, 629.7307322392587, 557.0403888231561, 664.7149187922478], 'text': 'Неориентированный граф G=(V,E) называется полным, если $E=V\\times V\\setminus\\{(v,v)\\mid v\\in V\\}$, т.е. любые две его вершины соединены ребром. Полный n-вершинный граф часто обозначается как $K_n$. На следующем рисунке показаны первые пять полных графов.'}]
-    formula_processor.process(chunks=chunks, document_path="C:/Users/Yana/Downloads/Alg-graphs-full_organized_str5.pdf")
+    chunks = [{"id": "4-45", "block_type": "Text", "page": "4", "bbox": [ 123.24073457717897, 218.9063973974566, 557.790106708517, 252.64197233884545], "text": "Определение 7. Матрицей смежности ориентированного (или неориентированного) графа G=(V,E) с n вершинами $V=\\{v_1,\\ldots,v_n\\}$ называется булева матрица $A_G$ размера $n\\times n$ с элементами"}]
+
+    formula_processor.process(chunks=chunks, document_path="C:/Users/Yana/Downloads/Alg-graphs-full_organized_removed.pdf")

@@ -264,7 +264,7 @@ class TextProcessor:
         self.process_document_data['total_words_count'] = self.total_words_count
         self.process_document_data['uncorrected_words_count'] = self.bad_words_count
         self.process_document_data['corrected_words_count'] = self.total_words_count - self.bad_words_count
-        self.process_document_data['uncorrected_chunks'] = self.bad_chunks
+        self.process_document_data['uncorrected_chunks'] = self.bad_chunks.copy()
         self.process_document_data['total_chunks_with_bad_words'] = len(self.bad_chunks_status)
         self.process_document_data['total_time'] = total_time
 
@@ -315,7 +315,7 @@ class TextProcessor:
                 self.update_stats(time() - start_time)
                 return self.text_chunks
             else:
-                log.warn(f"Остались неисправленные чанки. Еще повторных попыток {self.max_retries - attempt}")
+                log.warning(f"Остались неисправленные чанки. Еще повторных попыток {self.max_retries - attempt}")
         else:
             log.error("Достигнуто максимальное количество попыток, но не все чанки исправлены")
             # Сохранение данных в файл
