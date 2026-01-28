@@ -74,7 +74,7 @@ class MarkerProcessor:
 
         # Сохранение данных в файл
         if self.need_output_file:
-            self.save_final_document(document_path)
+            self.save_final_document()
 
         self.update_document_data(time() - start_time)
 
@@ -143,7 +143,7 @@ class MarkerProcessor:
     def get_stats(self):
         return self.document_data
 
-    def save_final_document(self, document_path: str):
+    def save_final_document(self):
         """
         Сохранения результата обработки документа.
         """
