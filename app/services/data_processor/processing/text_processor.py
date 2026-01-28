@@ -275,7 +275,7 @@ class TextProcessor:
         """
         Сохранения результата обработки документа.
         """
-        output_path = self.output_folder / f"{self.process_document_data['result_document_name']}_text_processed_json.txt"
+        output_path = self.output_folder / self.process_document_data['result_document_name']
 
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(self.text_chunks, f, ensure_ascii=False, indent=4, default=str)
