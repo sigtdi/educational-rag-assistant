@@ -56,17 +56,13 @@ class TextProcessor:
 
         self.text_chunks = [] # Чанки с полным текстом
         self.bad_chunks_status = {} # Список чанков со смешанными словами, их количество и статус выполнения
-        self.bad_chunks = [] # Чанки, которые не удалось поправить
-
-        self.total_words_count = 0 # Общее количество слов со смешением алфавитов
-        self.bad_words_count = 0 # Количество слов, которые не удалось исправить через vlm
 
         self.process_document_data = {
-            'total_words_count': 0,
-            'uncorrected_words_count': 0,
-            'corrected_words_count': 0,
-            'uncorrected_chunks': [],
-            'total_chunks_with_bad_words': 0,
+            'total_text_errors': 0, # Общее количество слов со смешением алфавитов
+            'failed_text_errors': 0, # Количество слов, которые не удалось исправить через vlm
+            'corrected_text_errors': 0, # Количество исправленных слов
+            'failed_chunks': [], # Чанки, которые не удалось поправить
+            'total_chunks_with_text_errors': 0, # Общее количество чанков с текстовыми ошибками
             'result_document_name': '',
             'need_save': self.need_output_file,
             'total_time': 0
@@ -124,20 +120,16 @@ class TextProcessor:
         """
         self.text_chunks = []
         self.bad_chunks_status = {}
-        self.bad_chunks = []
-
-        self.total_words_count = 0
-        self.bad_words_count = 0
 
         self.text_chunks = text
         self.document_name = Path(document_path).name
 
         self.process_document_data = {
-            'total_words_count': 0,
-            'uncorrected_words_count': 0,
-            'corrected_words_count': 0,
-            'uncorrected_chunks': [],
-            'total_chunks_with_bad_words': 0,
+            'total_text_errors': 0,
+            'failed_text_errors': 0,
+            'corrected_text_errors': 0,
+            'failed_chunks': [],
+            'total_chunks_with_text_errors': 0, # Общее количество чанков с текстовыми ошибками
             'result_document_name': f"{Path(self.document_name).stem}_text_processed_json.txt",
             'need_save': self.need_output_file,
             'total_time': 0
@@ -152,6 +144,8 @@ class TextProcessor:
             text_no_math = re.sub(r'\$\$.*?\$\$', ' ', chunk['text'], flags=re.DOTALL)
             text_no_math = re.sub(r'\$.*?\$', ' ', text_no_math)
             text_clean_sep = re.sub(r'[-–—]', ' ', text_no_math)
+
+            has_text_error = False
 
             for word in text_clean_sep.split():
                 clean_word = "".join(c for c in word if c.isalpha())
@@ -178,8 +172,12 @@ class TextProcessor:
                             'words_count': self.bad_chunks_status.get(chunk['id'], {}).get('words_count', 0) + 1,
                             'status': 'process'
                         }
-                        self.total_words_count += 1
+                        self.process_document_data['total_text_errors'] += 1
+                        has_text_error = True
                         break
+
+            if has_text_error:
+                self.process_document_data['total_chunks_with_text_errors'] += 1
 
     def correct_words_via_vlm(self, chunk_id, text):
         for attempt in range(self.max_retries):
@@ -258,14 +256,10 @@ class TextProcessor:
 
     def update_stats(self, total_time):
         for index, chunk_id, text in self.one_chunk_fragments:
-            self.bad_words_count += self.bad_chunks_status[chunk_id]['words_count']
-            self.bad_chunks.append(chunk_id)
+            self.process_document_data['failed_text_errors'] += self.bad_chunks_status[chunk_id]['words_count']
+            self.process_document_data['failed_chunks'].append(chunk_id)
 
-        self.process_document_data['total_words_count'] = self.total_words_count
-        self.process_document_data['uncorrected_words_count'] = self.bad_words_count
-        self.process_document_data['corrected_words_count'] = self.total_words_count - self.bad_words_count
-        self.process_document_data['uncorrected_chunks'] = self.bad_chunks.copy()
-        self.process_document_data['total_chunks_with_bad_words'] = len(self.bad_chunks_status)
+        self.process_document_data['corrected_words_count'] =  self.process_document_data['total_text_errors'] -  self.process_document_data['failed_text_errors']
         self.process_document_data['total_time'] = total_time
 
     def get_stats(self):

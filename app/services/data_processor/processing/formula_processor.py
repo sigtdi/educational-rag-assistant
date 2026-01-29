@@ -64,14 +64,19 @@ class FormulaProcessor:
         self.text_chunks = [] # Чанки с полным текстом
         self.old_fragments = {} # Список формул для каждого чанка {chunk_id: [фрагменты]}
         self.fixed_fragments = {} # Список исправленных формул для каждого чанка, маска и статус
-        self.bad_fragments = [] # Фрагменты, которые так и не удалось исправить
 
-        self.total_fragments_count = 0 # Общее количество фрагментов, названных формулами в документе
-        self.modified_fragments_count = 0 # Количество измененных фрагментов
-        self.text_classified_formulas_count = 0 # Количество текста, названного формулой при обработке Marker
-        self.bad_fragments_count = 0 # Количество фрагментов, которые не удалось исправить через vlm
-
-        self.process_document_data = {}
+        self.process_document_data = {
+            'total_fragments_classified_formulas': 0, # Общее количество фрагментов, названных формулами в документе
+            'total_real_formulas': 0, # Количество формул, названных формулой при обработке Marker
+            'corrected_fragments': 0, # Количество измененных фрагментов
+            'text_classified_formulas_count': 0, # Количество текста, названного формулой при обработке Marker
+            'failed_fragments_count': 0, # Количество фрагментов, которые не удалось исправить через vlm
+            'total_chunks_with_fragments': 0, # Количество чанков, содержащих потенциальные формулы
+            'failed_chunks': [], # Чанки, которые не удалось исправить
+            'result_document_name': '',
+            'need_save': self.need_output_file,
+            'total_time': 0
+        }
 
     @property
     def one_chunk_fragments(self):
@@ -136,10 +141,7 @@ class FormulaProcessor:
         Установка данных для обработки нового документа.
         """
         self.old_fragments = {}
-        self.bad_fragments = []
-        self.modified_fragments_count = 0
-        self.text_classified_formulas_count = 0
-        self.bad_fragments_count = 0
+        self.fixed_fragments = {}
 
         self.text_chunks = text
         self.document_path = document_path
@@ -147,10 +149,11 @@ class FormulaProcessor:
         self.process_document_data = {
             'total_fragments_classified_formulas': 0,
             'total_real_formulas': 0,
+            'corrected_fragments': 0,
             'text_classified_formulas_count': 0,
-            'uncorrected_fragments_count': 0,
+            'failed_fragments_count': 0,
             'total_chunks_with_fragments': 0,
-            'uncorrected_chunks': [],
+            'failed_chunks': [],
             'result_document_name': f"{Path(self.document_path).stem}_formulas_processed_json.txt",
             'need_save': self.need_output_file,
             'total_time': 0
@@ -173,7 +176,7 @@ class FormulaProcessor:
             chunk_id = chunk["id"]
             fragments_count = len(re.findall(r'\[\[FRAGMENT_\d+\]\]', chunk["text"]))
 
-            self.total_fragments_count += fragments_count
+            self.process_document_data['total_fragments_classified_formulas'] += fragments_count
             self.process_document_data['total_chunks_with_fragments'] += 1
 
             self.fixed_fragments[chunk_id] = {
@@ -284,6 +287,7 @@ class FormulaProcessor:
                     self.process_document_data['text_classified_formulas_count'] += 1
 
                 if is_valid:
+                    self.process_document_data['corrected_fragments'] += 1
                     data["mask"][i] = 1
 
     @log.catch
@@ -312,11 +316,9 @@ class FormulaProcessor:
 
     def update_stats(self, total_time):
         for index, chunk_id, fragments_list, context, image_path in self.one_chunk_fragments:
-            self.process_document_data['uncorrected_chunks'].append(chunk_id)
-            self.bad_fragments_count += self.fixed_fragments[chunk_id]['mask'].count(0)
+            self.process_document_data['failed_chunks'].append(chunk_id)
+            self.process_document_data['failed_fragments_count'] += self.fixed_fragments[chunk_id]['mask'].count(0)
 
-        self.process_document_data['total_fragments_classified_formulas'] = self.total_fragments_count
-        self.process_document_data['uncorrected_fragments_count'] = self.bad_fragments_count
         self.process_document_data['total_time'] = total_time
 
     def get_stats(self):
@@ -371,10 +373,3 @@ class FormulaProcessor:
             self.update_stats(time() - start_time)
             return self.text_chunks
 
-
-formula_processor = FormulaProcessor()
-
-if __name__ == "__main__":
-    chunks = [{"id": "4-45", "block_type": "Text", "page": "4", "bbox": [ 123.24073457717897, 218.9063973974566, 557.790106708517, 252.64197233884545], "text": "Определение 7. Матрицей смежности ориентированного (или неориентированного) графа G=(V,E) с n вершинами $V=\\{v_1,\\ldots,v_n\\}$ называется булева матрица $A_G$ размера $n\\times n$ с элементами"}]
-
-    formula_processor.process(chunks=chunks, document_path="C:/Users/Yana/Downloads/Alg-graphs-full_organized_removed.pdf")

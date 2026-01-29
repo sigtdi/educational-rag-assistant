@@ -128,12 +128,16 @@ class ImageProcessor:
 
         self.text_chunks = [] # Чанки с полным текстом
         self.description_list = {} # Список описаний для каждого чанка, подписей к изображениям и статус
-        self.bad_chunks = [] # Чанки, для которых не удалось сгенерировать описание
 
-        self.total_images_count = 0 # Общее количество изображений
-        self.bad_images_count = 0 # Количество изображений, для которых не удалось сгенерировать описание через vlm
-
-        self.process_document_data = {} # Данные по всем книгам
+        self.process_document_data = {
+            'total_images_count': 0, # Общее количество изображений
+            'failed_images_count': 0, # Количество изображений, которым не удалось сгенерировать описание
+            'described_images': 0, # Количество изображений, которым было сгенерировано описание
+            'failed_chunks': [], # Чанки, которым не удалось сгенерировать описание
+            'result_document_name': '',
+            'need_save': self.need_output_file,
+            'total_time': 0
+        }
 
     @property
     def one_chunk_fragments(self):
@@ -199,18 +203,15 @@ class ImageProcessor:
         Установка данных для обработки нового документа.
         """
         self.description_list = {}
-        self.bad_images_count = 0
-        self.total_images_count = 0
-
 
         self.text_chunks = text
         self.document_path = document_path
 
-
         self.process_document_data = {
             'total_images_count': 0,
-            'uncorrected_images_count': 0,
-            'uncorrected_chunks': [],
+            'failed_images_count': 0,
+            'described_images': 0,
+            'failed_chunks': [],
             'result_document_name': f"{Path(self.document_path).stem}_images_processed_json.txt",
             'need_save': self.need_output_file,
             'total_time': 0
@@ -240,7 +241,7 @@ class ImageProcessor:
                 page = document[page_num]
                 chunk_bbox = chunk['bbox']
                 crop_rect = pymupdf.Rect(*chunk_bbox)
-                self.total_images_count += 1
+                self.process_document_data['total_images_count'] += 1
 
                 try:
                     pix = page.get_pixmap(matrix=mat, clip=crop_rect)
@@ -311,6 +312,7 @@ class ImageProcessor:
 
     def insert_image_data(self, chunk_index, chunk_id):
         data = self.description_list[chunk_id]
+        self.process_document_data['described_images'] += 1
 
         kw_str = f". Ключевые слова: {', '.join(data['key_elements'])}" if data['key_elements'] else ""
         markdown_insert = f"![{data['image_type']}][{data['caption']}]({data['description']}{kw_str})"
@@ -319,11 +321,9 @@ class ImageProcessor:
 
     def update_stats(self, total_time):
         for index, chunk_id, caption, context, image_path in self.one_chunk_fragments:
-            self.bad_chunks.append(chunk_id)
-            self.bad_images_count += 1
+            self.process_document_data['failed_chunks'].append(chunk_id)
+            self.process_document_data['failed_images_count'] += 1
 
-        self.process_document_data['total_images_count'] = self.total_images_count
-        self.process_document_data['uncorrected_images_count'] = self.bad_chunks.copy()
         self.process_document_data['total_time'] = total_time
 
     def get_stats(self):
@@ -380,6 +380,3 @@ class ImageProcessor:
 
             self.update_stats(time() - start_time)
             return self.text_chunks
-
-
-
