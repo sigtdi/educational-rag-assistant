@@ -35,7 +35,7 @@ class MarkerProcessor:
         log.info("Marker загружен")
 
     @log.catch
-    def run_marker(self, document_path: str):
+    def process(self, document_path: str):
         """
         Основная функция обработки файла через Marker.
         """

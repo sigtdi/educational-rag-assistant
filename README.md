@@ -11,7 +11,7 @@
 ## 🛠 Технологический стек
 - **Язык:** Python
 - **AI/ML:** LLM, VLM для OCR, Embedding models (тестирование различных вариантов)
-- **Data & Search:** PostgreSQL (Vector extension), Hybrid Search механизмы
+- **Data & Search:** PostgreSQL (Vector extension), Hybrid Search 
 - **Инфраструктура:** API (FastAPI), Docker для контейнеризации
 
 ## 📂 Структура проекта

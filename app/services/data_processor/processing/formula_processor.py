@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 from itertools import count
 from pylatexenc.latexwalker import LatexWalker
 from time import time
+from PIL import Image
+import io
 
 from langchain_ollama import ChatOllama
 from langchain_core.output_parsers import PydanticOutputParser
@@ -215,10 +217,20 @@ class FormulaProcessor:
 
                     chunk['text'] = re.sub(pattern, lambda m: f"[[FRAGMENT_{next(counter)}]]", chunk['text'])
 
+                    img_data = pix.tobytes("png")
+                    img = Image.open(io.BytesIO(img_data))
+
+                    # Если ширина больше 600px, уменьшаем, чтобы сильно не забивать память
+                    max_width = 600
+                    if img.width > max_width:
+                        w_percent = (max_width / float(img.width))
+                        h_size = int((float(img.height) * float(w_percent)))
+                        img = img.resize((max_width, h_size), Image.Resampling.LANCZOS)
+
                     filename = f"chunk{chunk['id']}_{Path(self.document_path).stem}_formulas.png"
                     filepath = self.image_folder / filename
                     chunk['image_path'] = filepath
-                    pix.save(filepath)
+                    img.save(filepath, "PNG", optimize=True)
                 except Exception:
                     pass
 
@@ -254,12 +266,12 @@ class FormulaProcessor:
                 return None
 
             except json.JSONDecodeError as e:
-                log.error(f"Некорректный ответ для чанка {chunk_id}. Осталось повторных попыток {self.max_retries - attempt}")
+                log.error(f"Некорректный ответ для чанка {chunk_id}. Осталось повторных попыток {self.max_retries - attempt - 1}")
                 if attempt == self.max_retries:
                     return None
 
             except Exception as e:
-                log.error(f"Ошибка обработки чанка {chunk_id}: {e}.\nОсталось повторных попыток {self.max_retries - attempt}")
+                log.error(f"Ошибка обработки чанка {chunk_id}: {e}.\nОсталось повторных попыток {self.max_retries - attempt - 1}")
                 if attempt == self.max_retries:
                     return None
         return None
@@ -363,7 +375,7 @@ class FormulaProcessor:
                 self.update_stats(time() - start_time)
                 return self.text_chunks
             else:
-                log.warning(f"Остались неисправленные чанки. Еще повторных попыток {self.max_retries - attempt}")
+                log.warning(f"Остались неисправленные чанки. Еще повторных попыток {self.max_retries - attempt - 1}")
         else:
             log.error("Достигнуто максимальное количество попыток, но не все чанки исправлены")
             # Сохранение данных в файл

@@ -280,12 +280,12 @@ class ImageProcessor:
                 return None
 
             except json.JSONDecodeError as e:
-                log.error(f"Некорректный ответ для чанка {chunk_id}. Осталось повторных попыток {self.max_retries - attempt}")
+                log.error(f"Некорректный ответ для чанка {chunk_id}. Осталось повторных попыток {self.max_retries - attempt - 1}")
                 if attempt == self.max_retries:
                     return None
 
             except Exception as e:
-                log.error(f"Ошибка обработки чанка {chunk_id}: {e}.\nОсталось повторных попыток {self.max_retries - attempt}")
+                log.error(f"Ошибка обработки чанка {chunk_id}: {e}.\nОсталось повторных попыток {self.max_retries - attempt - 1}")
                 if attempt == self.max_retries:
                     return None
         return None
@@ -371,7 +371,7 @@ class ImageProcessor:
                 self.update_stats(time() - start_time)
                 return self.text_chunks
             else:
-                log.warning(f"Остались неисправленные чанки. Еще повторных попыток {self.max_retries - attempt}")
+                log.warning(f"Остались неисправленные чанки. Еще повторных попыток {self.max_retries - attempt - 1}")
         else:
             log.error("Достигнуто максимальное количество попыток, но не все чанки исправлены")
             # Сохранение данных в файл
