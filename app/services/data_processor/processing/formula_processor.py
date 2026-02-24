@@ -2,6 +2,8 @@ import pymupdf
 import re
 import base64
 import json
+
+from openai import timeout
 from tqdm import tqdm
 from pathlib import Path
 from typing import List, Dict
@@ -56,6 +58,7 @@ class FormulaProcessor:
 
         self._prompt = None
         self._chain = None
+        self._model = None
 
         self.document_path = None
         self.model_name = model_name
@@ -120,7 +123,8 @@ class FormulaProcessor:
                 )),
                 ("human", [
                     {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,{image_base64}"}},
-                    {"type": "text", "text": "Распознанный текст:\n{context}"}
+                    {"type": "text", "text": "Распознанный текст:\n{context}"},
+                    {"type": "text", "text": "{about_prev_ans}"}
                 ])
             ])
 
@@ -132,11 +136,22 @@ class FormulaProcessor:
         LangChain цепочка: prompt | model | slash_fixer | parser
         """
         if self._chain is None:
-            self._chain = self.prompt | self.create_model() | RunnableLambda(selective_backslash_fixer) | self.parser
+            self._chain = self.prompt | self.model | RunnableLambda(selective_backslash_fixer) | self.parser
         return self._chain
 
-    def create_model(self):
-        return ChatOllama(model=self.model_name, temperature=0, keep_alive=0)
+    @property
+    def model(self):
+        """
+        Модель Ollama.
+        """
+        if self._model is None:
+            self._model = ChatOllama(
+                model=self.model_name,
+                temperature=0,
+                keep_alive=0,
+                num_predict=2048,
+            )
+        return self._model
 
     def new_document_stats(self, text, document_path):
         """
@@ -227,6 +242,11 @@ class FormulaProcessor:
                         h_size = int((float(img.height) * float(w_percent)))
                         img = img.resize((max_width, h_size), Image.Resampling.LANCZOS)
 
+                    if img.height < 32:
+                        new_img = Image.new('RGB', (img.width, 32), (255, 255, 255))
+                        new_img.paste(img, (0, (32 - img.height) // 2))
+                        img = new_img
+
                     filename = f"chunk{chunk['id']}_{Path(self.document_path).stem}_formulas.png"
                     filepath = self.image_folder / filename
                     chunk['image_path'] = filepath
@@ -236,16 +256,21 @@ class FormulaProcessor:
 
     def correct_fragments_via_vlm(self, chunk_id, context, image_path):
         image_b64 = self.load_image_as_base64(image_path)
+        prev_ans = ''
+        reason = ''
 
         for attempt in range(self.max_retries):
             try:
                 result = self.chain.invoke({
                     'image_base64': image_b64,
                     'context': context,
-                    "format_instructions": self.parser.get_format_instructions()
+                    "format_instructions": self.parser.get_format_instructions(),
+                    "about_prev_ans": f"Ответ {prev_ans} неверный: {reason}" if not prev_ans else '',
                 })
 
-
+                if len(result.fragments) != len(self.fixed_fragments[chunk_id]["mask"]):
+                    reason = 'Ответ содержит больше пропущенных ответов, чем есть в тексте'
+                    raise Exception
 
                 for fragment in result.fragments:
                     # Проверяем не назвала ли VLM формулу текстом
@@ -263,6 +288,7 @@ class FormulaProcessor:
                     if self.fixed_fragments[chunk_id]["mask"][idx] == 0:
                         self.fixed_fragments[chunk_id]["items"][idx] = fragment
 
+                print(result)
                 return None
 
             except json.JSONDecodeError as e:
@@ -271,7 +297,13 @@ class FormulaProcessor:
                     return None
 
             except Exception as e:
+                prev_ans = str(result.fragments)
+
+                if e == 'list index out of range':
+                    reason = 'Неверно указаны некоторые scr фрагментов. Убедись, что они соответствуют шаблону FRAGMENT_N.'
+
                 log.error(f"Ошибка обработки чанка {chunk_id}: {e}.\nОсталось повторных попыток {self.max_retries - attempt - 1}")
+                print(result)
                 if attempt == self.max_retries:
                     return None
         return None
