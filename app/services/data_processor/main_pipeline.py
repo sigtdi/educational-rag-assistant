@@ -8,9 +8,8 @@ from typing import Dict
 from datetime import datetime
 
 from processing.marker_processor import MarkerProcessor
-from processing.text_processor import TextProcessor
+from processing.post_processor import TextProcessor
 from processing.image_processor import ImageProcessor
-from processing.formula_processor import FormulaProcessor
 from app.logger_setup import log
 
 @dataclass
@@ -26,23 +25,21 @@ class PipelineConfig:
 
     # Опции обработки
     process_marker: bool = False # Для False обязательно наличие текстового файла для этого документа в папке output для Marker
-    process_text: bool = False
-    process_formula: bool = True
-    process_image: bool = True
+    process_text: bool = True
+    process_image: bool = False
     # Если опция маркера не выполнена, то первая опция в цепочке
     # true - выполняется на основе данных из папки output для Marker
-    # false - выполняется на основе данных из папки output для предыдущего шага (marker - text - formula - image)
+    # false - выполняется на основе данных из папки output для предыдущего шага (marker - text - image)
     one_step: bool = False
 
     # Настройки модели
     model_name: str = 'qwen3-vl:8b-instruct'
 
     # Директории
-    formulas_dir: str = 'extracted_formulas_images'
+    text_dir: str = 'extracted_formulas_images'
     images_dir: str = 'extracted_images'
     marker_processor_output: str = "output_marker_processor"
     text_processor_output: str = "output_text_processor"
-    formula_processor_output: str = "output_formulas_processor"
     image_processor_output: str = "output_image_processor"
 
     # Сохранение
@@ -74,15 +71,10 @@ class PipelineStats:
     # Основные метрики
     total_pages: int = 0
 
-    total_text_errors: int = 0
-    corrected_text_errors: int = 0
-    failed_text_errors: int = 0
-
-    total_fragments_classified_formulas: int = 0
-    total_real_formulas: int = 0
-    text_classified_formulas_count: int = 0
-    failed_fragments_count: int = 0
-    corrected_fragments: int = 0
+    total_chunks_checked_via_vlm: int = 0
+    total_corrected_chunks: int = 0
+    total_chunks: int = 0
+    total_failed_chunks: int = 0
 
     total_images: int = 0
     described_images: int = 0
@@ -110,9 +102,8 @@ class PDFProcessingPipeline:
         self.marker_processor = None
         self.text_processor = None
         self.image_processor = None
-        self.formula_processor = None
 
-        self.steps = ['marker', 'text', 'formula', 'image'] # Порядок обработки
+        self.steps = ['marker', 'text', 'image'] # Порядок обработки
         self.chunks = []
 
         log.info(f"Pipeline инициализирован")
@@ -127,14 +118,6 @@ class PDFProcessingPipeline:
         if self.config.process_marker:
             self.marker_processor = MarkerProcessor(
                 output_folder=self.config.marker_processor_output,
-                need_output_file=self.config.save_intermediate
-            )
-
-        if self.config.process_formula:
-            self.formula_processor = FormulaProcessor(
-                image_folder=self.config.formulas_dir,
-                model_name=self.config.model_name,
-                output_folder=self.config.formula_processor_output,
                 need_output_file=self.config.save_intermediate
             )
 
@@ -206,20 +189,14 @@ class PDFProcessingPipeline:
         stats.total_duration_seconds = time() - start_time
         stats.marker_process_time = stats_dict.get('marker', {}).get('total_time', 0)
         stats.text_process_time = stats_dict.get('text', {}).get('total_time', 0)
-        stats.formulas_process_time = stats_dict.get('formula', {}).get('total_time', 0)
         stats.images_process_time = stats_dict.get('image', {}).get('total_time', 0)
 
         stats.total_pages = stats_dict.get('marker', {}).get('total_pages', 0)
 
-        stats.total_text_errors = stats_dict.get('text', {}).get('total_text_errors', 0)
-        stats.corrected_text_errors = stats_dict.get('text', {}).get('corrected_text_errors', 0)
-        stats.failed_text_errors = stats_dict.get('text', {}).get('failed_text_errors', 0)
-
-        stats.total_fragments_classified_formulas = stats_dict.get('formula', {}).get('total_fragments_classified_formulas', 0)
-        stats.total_real_formulas = stats_dict.get('formula', {}).get('total_real_formulas', 0)
-        stats.text_classified_formulas_count = stats_dict.get('formula', {}).get('text_classified_formulas_count', 0)
-        stats.failed_fragments_count = stats_dict.get('formula', {}).get('failed_fragments_count', 0)
-        stats.corrected_fragments = stats_dict.get('formula', {}).get('corrected_fragments', 0)
+        stats.total_chunks_checked_via_vlm = stats_dict.get('text', {}).get('total_chunks_checked_via_vlm', 0)
+        stats.total_corrected_chunks = stats_dict.get('text', {}).get('total_corrected_chunks', 0)
+        stats.total_chunks = stats_dict.get('text', {}).get('total_chunks', 0)
+        stats.total_failed_chunks = stats_dict.get('text', {}).get('total_failed_chunks', 0)
 
         stats.total_images = stats_dict.get('formula', {}).get('total_images_count', 0)
         stats.described_images = stats_dict.get('formula', {}).get('described_images', 0)

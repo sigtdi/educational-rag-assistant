@@ -15,7 +15,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 
 from app.logger_setup import log
-from app.services.data_processor.utilits import selective_backslash_fixer
+from app.services.data_processor.utilits import answer_fixer
 
 
 class ImageOutput(BaseModel):
@@ -189,10 +189,10 @@ class ImageProcessor:
     @property
     def chain(self):
         """
-        LangChain цепочка: prompt | model | slash_fixer | parser
+        LangChain цепочка: prompt | model | answer_fixer | parser
         """
         if self._chain is None:
-            self._chain = self.prompt | self.create_model() | RunnableLambda(selective_backslash_fixer) | self.parser
+            self._chain = self.prompt | self.create_model() | RunnableLambda(answer_fixer) | self.parser
         return self._chain
 
     def create_model(self):
