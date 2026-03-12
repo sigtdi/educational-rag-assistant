@@ -8,7 +8,7 @@ from typing import Dict
 from datetime import datetime
 
 from processing.marker_processor import MarkerProcessor
-from processing.post_processor import TextProcessor
+from processing.text_processor import TextProcessor
 from processing.image_processor import ImageProcessor
 from app.logger_setup import log
 

@@ -30,7 +30,13 @@ class MarkerProcessor:
         self.document_data = {}
         self.need_output_file = need_output_file
         self.document_base_name = None
+        self.model_lst = None
 
+
+    def load_marker(self):
+        """
+        Загрузка данных marker.
+        """
         self.model_lst = create_model_dict()
         log.info("Marker загружен")
 
@@ -43,6 +49,7 @@ class MarkerProcessor:
         self.rendered_text = None
         self.final_chunks = []
         self.document_base_name = Path(document_path).stem
+        self.load_marker()
 
         log.info(f"Обработка файла {document_path}")
 
@@ -104,9 +111,12 @@ class MarkerProcessor:
             chunk['bbox'] = block.bbox
 
             # Удаляем чанки без смысловой нагрузки
-            if chunk['block_type'] == 'PageHeader' or chunk['block_type'] == 'PageFooter':
+            if chunk['block_type'] in {'PageHeader', 'PageFooter', 'FootNote'}:
                 continue
-            if chunk['block_type'] == 'Equation':
+            if len(chunk['text']) <= 5:
+                continue
+
+            if chunk['block_type'] == 'Equation' or chunk['block_type'] == 'Code':
                 chunk['text'] = '$$' + block.html + '$$'
 
 
@@ -135,6 +145,7 @@ class MarkerProcessor:
     def update_document_data(self, total_time):
         self.document_data = {
             'total_pages': len(self.rendered_text.metadata['page_stats']),
+            'total_chunks': len(self.final_chunks),
             'result_document_name': f"{self.document_base_name}_marker_processed_json.txt",
             'need_save': self.need_output_file,
             'total_time': total_time
