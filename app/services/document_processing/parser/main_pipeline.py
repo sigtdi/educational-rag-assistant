@@ -11,19 +11,18 @@ from image_processor import ImageProcessor
 from app.logger_setup import log
 
 @dataclass
-class PipelineConfig:
+class ParserConfig:
     """
-    Конфигурация pipeline.
+    Конфигурация парсера.
     """
-    document_path: str | None = None # При отсутствии будут браться файлы из input_dir
-    document_title: str | None = None # Название файла учебника
-    input_dir: Path = Path(__file__).resolve().parent / 'data'
-    document_name: str | None = None # Название учебника (только для работы с одним файлом)
+    document_name: str | None = None # При отсутствии будут браться все файлы из input_dir по очереди
+    input_dir: Path = Path(__file__).resolve().parent.parent.parent.parent / 'data'
+    document_title: str | None = None # Название учебника (только для работы с одним файлом)
     document_author: str | None = None # Автор учебника (только для работы с одним файлом)
 
     # Опции обработки
-    process_marker: bool = True # Для False обязательно наличие текстового файла для этого документа в папке output для Marker
-    process_text: bool = False
+    process_marker: bool = False # Для False обязательно наличие текстового файла для этого документа в папке output для Marker
+    process_text: bool = True
     process_image: bool = False
     # Если опция маркера не выполнена, то первая опция в цепочке
     # true - выполняется на основе данных из папки output для Marker
@@ -45,9 +44,9 @@ class PipelineConfig:
 
 
 @dataclass
-class PipelineStats:
+class ParserStats:
     """
-    Статистика выполнения pipeline
+    Статистика выполнения пайплайна парсера
     """
     document_title: str
 
@@ -83,13 +82,13 @@ class PipelineStats:
         return asdict(self)
 
 
-class PDFProcessingPipeline:
-    def __init__(self, config: PipelineConfig):
+class PDFParser:
+    def __init__(self, config: ParserConfig):
         self.config = config
 
-        if self.config.document_path:
-            self.stats = PipelineStats(
-                document_title=Path(config.document_path).stem,
+        if self.config.document_name:
+            self.stats = ParserStats(
+                document_title=Path(config.document_name).stem,
                 start_time=datetime.now().isoformat()
             )
         else:
@@ -145,7 +144,7 @@ class PDFProcessingPipeline:
         prev_step = self.steps[0]
         for step in self.steps[1:]:
             if getattr(self.config, f'process_{step}'):
-                script_dir = Path(__file__).parent
+                script_dir = Path(__file__).parent.parent
                 processor_output_dir = getattr(self.config, f"{prev_step}_processor_output")
 
                 file_path = script_dir / "output" / processor_output_dir / f"{document_title}_{prev_step}_processed_json.txt"
@@ -161,7 +160,7 @@ class PDFProcessingPipeline:
                 return
             prev_step = step
 
-    def process_one_document(self, document_path: str | None, stats: PipelineStats):
+    def process_one_document(self, document_path: str | None, stats: ParserStats):
         """
         Обработка одного документа: запуск всех выбранных опций и сохранение статистики
         """
@@ -205,14 +204,15 @@ class PDFProcessingPipeline:
 
     def run(self):
         self.initialize_processors()
-        if self.config.document_path:
-            self.process_one_document(document_path=self.config.document_path, stats=self.stats)
+        if self.config.document_name:
+            document_path = self.config.input_dir / self.config.document_name
+            self.process_one_document(document_path=str(document_path), stats=self.stats)
         else:
             self.process_one_document(document_path='ff', stats=self.stats_list[-1])
 
 
 if __name__ == "__main__":
-    p = PipelineConfig(document_path="/app/data/Alg-graphs-full.pdf")
-    parser = PDFProcessingPipeline(p)
+    p = ParserConfig(document_name="Alg-graphs-full.pdf")
+    parser = PDFParser(p)
     parser.run()
     log.info(parser.get_stats())

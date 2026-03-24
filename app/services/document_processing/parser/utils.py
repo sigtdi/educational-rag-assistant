@@ -1,6 +1,7 @@
 import re
 from app.logger_setup import log
 
+
 def answer_fixer(ai_message):
     json_content = ai_message.content.strip()
 
@@ -167,12 +168,19 @@ def wrap_latex(text):
     for r_start, r_end in current_ranges:
         while True:
             content = clean_text[r_start:r_end]
+            balances = {}
+
             # Считаем разницу в количестве открывающих и закрывающих скобок
-            balances = {
-                'round': content.count('(') - content.count(')'),
-                'square': content.count('[') - content.count(']'),
-                'curly': content.count('{') - content.count('}')
-            }
+            for name, (open_b, close_b) in {'round': '()', 'square': '[]', 'curly': '{}'}.items():
+                balance = min_balance = 0
+                for char in content:
+                    if char == open_b:
+                        balance += 1
+                    elif char == close_b:
+                        balance -= 1
+                        min_balance = min(min_balance, balance)
+
+                balances[name] = -1 if min_balance < 0 else 1 if balance > 0 else 0
 
             changed = False
             # Если закрывающих больше расширяем влево

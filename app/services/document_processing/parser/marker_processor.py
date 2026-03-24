@@ -120,6 +120,7 @@ class MarkerProcessor:
         """
         # Приводим html <math> блоки к LaTex формату
         pattern = r'<math\s+display="(inline|block)"[^>]*>(.*?)</math>'
+        header_pattern = re.compile(r'^(Задача|Упражнение)\s*\d+(\.\d+)?')
         chunk_id = 0
         is_ex = False
 
@@ -130,15 +131,6 @@ class MarkerProcessor:
             chunk['block_type'] = block.block_type
             chunk['page'] = page
             chunk['bbox'] = block.bbox
-
-            # Пропускаем чанки с задачами и упражнениями
-            if is_ex and chunk['block_type'] != 'SectionHeader':
-                continue
-            is_ex = False
-
-            # Удаляем чанки без смысловой нагрузки
-            if chunk['block_type'] in {'PageHeader', 'PageFooter', 'Footnote'}:
-                continue
 
             def replacement_function(match):
                 display_type = match.group(1)
@@ -158,6 +150,15 @@ class MarkerProcessor:
 
             chunk['text'] = re.sub(pattern, replacement_function, block.html, flags=re.DOTALL)
             chunk['text'] = BeautifulSoup(chunk['text'], "html.parser").get_text()
+
+            # Пропускаем чанки с задачами и упражнениями
+            if is_ex and (chunk['block_type'] != 'SectionHeader' or header_pattern.match(chunk['text'].strip())):
+                continue
+            is_ex = False
+
+            # Удаляем чанки без смысловой нагрузки
+            if chunk['block_type'] in {'PageHeader', 'PageFooter', 'Footnote'}:
+                continue
 
             # Определяем начало чанков с задачами и упражнениями
             if chunk['block_type'] == 'SectionHeader' and ('Задачи' in chunk['text'] or 'Упражнения' in chunk['text']) and len(chunk['text']) <= 15:

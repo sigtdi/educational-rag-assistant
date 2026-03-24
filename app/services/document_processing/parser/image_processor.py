@@ -15,9 +15,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 
 from app.logger_setup import log
-from utilits import answer_fixer
+from app.services.document_processing.parser.utils import answer_fixer
 
-
+#TODO
 class ImageOutput(BaseModel):
     """
     Схема выходных данных от VLM
