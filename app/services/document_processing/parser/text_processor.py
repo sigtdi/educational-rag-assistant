@@ -61,7 +61,8 @@ class TextProcessor:
             image_folder:       str     = 'extracted_text_images',
             model_name:         str     = 'qwen3-vl:8b-instruct',
             output_folder:      str     = "output_text_processor",
-            need_output_file:   bool    = True
+            need_output_file:   bool    = True,
+            delete_images:      bool    = False
     ):
         if need_output_file:
             self.output_folder = Path(__file__).resolve().parent.parent / 'output' / output_folder
@@ -79,9 +80,11 @@ class TextProcessor:
         self.parser = PydanticOutputParser(pydantic_object=VLMOutput)
         self.max_retries = 3
         self.need_output_file = need_output_file
+        self.need_delete_images = delete_images
 
         self.text_chunks = [] # Список чанков с текстом документа
         self.chunk_index_mask = [] # Маска индексов чанков, которые исправлены (1) и которым нужно исправление (0)
+        self.remaining_chunks = 0
 
         self.process_document_data = {
             'total_chunks_checked_via_vlm': 0, # Количество чанков, которые были нужно проверить через vlm
@@ -142,6 +145,19 @@ class TextProcessor:
             )
         return self._model
 
+    @property
+    def get_error_chunk(self):
+        """
+        Генератор для итерации по чанкам с изображениями.
+        """
+        for index, mask in enumerate(self.chunk_index_mask):
+            if mask:
+                continue
+
+            chunk = self.text_chunks[index]
+
+            yield index, chunk
+
     def new_document_stats(self, text, document_path):
         """
         Установка данных для обработки нового документа.
@@ -180,6 +196,28 @@ class TextProcessor:
 
         gc.collect()
 
+    def delete_images(self):
+        """
+        Удаляет все изображения, созданные для текущего документа.
+        """
+        log.info('Удаление собранных изображений.')
+        stem = Path(self.document_path).stem
+        pattern = f"chunk*_{stem}.png"
+
+        files_to_delete = list(self.image_folder.glob(pattern))
+
+        if not files_to_delete:
+            log.info(f"Изображений для документа {stem} не найдено.")
+            return
+
+        for file_path in files_to_delete:
+            try:
+                file_path.unlink()
+            except Exception as e:
+                log.error(f"Ошибка при удалении {file_path.name}: {e}")
+
+        log.info(f"Очистка завершена. Удалено файлов: {len(files_to_delete)}")
+
     @log.catch
     def extract_fragments_images_and_text(self, dpi=150):
         """
@@ -190,11 +228,8 @@ class TextProcessor:
             zoom = dpi / 72
             mat = pymupdf.Matrix(zoom, zoom)
 
-            for index, mask in enumerate(tqdm(self.chunk_index_mask, "Получение изображений чанков")):
-                if mask:
-                    continue
+            for index, chunk in tqdm(self.get_error_chunk, desc="Получение изображений", total=self.remaining_chunks):
 
-                chunk = self.text_chunks[index]
                 page_num = int(chunk['page'])
                 page = document[page_num]
                 chunk_bbox = chunk['bbox']
@@ -294,6 +329,8 @@ class TextProcessor:
             self.chunk_index_mask[index] = (not matches) and has_one_lang
             self.process_document_data['total_chunks_checked_via_vlm'] += not ((not matches) and has_one_lang)
 
+        self.remaining_chunks = self.chunk_index_mask.count(0)
+
     def validate_chunk(self, vlm_text, chunk_text):
         """
         Проверка формул в исправленном тексте на соответствие LaTex формату.
@@ -378,32 +415,34 @@ class TextProcessor:
         self.extract_fragments_images_and_text()
 
         for attempt in range(self.max_retries):
-            for index, mask in enumerate(tqdm(self.chunk_index_mask, "Исправление текста")):
-                if mask:
-                    continue
+            for index, chunk in tqdm(self.get_error_chunk, desc="Исправление текста", total=self.remaining_chunks):
 
-                chunk = self.text_chunks[index]
                 vlm_text = self.correct_fragments_via_vlm(chunk['id'], chunk['image_path'])
                 if self.validate_chunk(vlm_text, chunk['text']):
                     self.insert_fixed_fragments(chunk_index=index, vlm_text=vlm_text)
 
             if all(self.chunk_index_mask):
                 log.info("Весь текст успешно проверен и исправлен.")
-                # Сохранение данных в файл
+                # Сохранение данных в файл и удаление изображений
                 if self.need_output_file:
                     self.save_final_document()
+                if self.need_delete_images:
+                    self.delete_images()
 
                 self.update_stats(total_time=time() - start_time)
                 self.clear_vlm_memory()
                 return self.text_chunks
 
             else:
+                self.remaining_chunks = self.chunk_index_mask.count(0)
                 log.warning(f"Остались неисправленные чанки. Еще повторных попыток {self.max_retries - attempt - 1}.")
         else:
             log.error("Достигнуто максимальное количество попыток, но не все чанки исправлены.")
-            # Сохранение данных в файл
+            # Сохранение данных в файл и удаление изображений
             if self.need_output_file:
                 self.save_final_document()
+            if self.need_delete_images:
+                self.delete_images()
 
             self.update_stats(time() - start_time)
             self.clear_vlm_memory()

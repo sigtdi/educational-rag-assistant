@@ -1,26 +1,76 @@
 import re
+import json
 from app.logger_setup import log
 
-
 def answer_fixer(ai_message):
-    json_content = ai_message.content.strip()
+    json_content, p_type = get_content_from_ai_message(ai_message)
+
+    if p_type == 'error':
+        raise Exception
 
     try:
+        if p_type == 'text_processor':
+            text = latex_fixer(json_content['text'])
+            text = backslash_fixer(text)
+            text = wrap_latex(text)
+            json_content['text'] = text
+
+        elif p_type == 'image_processor':
+            text = latex_fixer(json_content["description"])
+            text = backslash_fixer(text)
+            text = wrap_latex(text)
+            json_content["description"] = text
+
+            elems = []
+            for elem in json_content['key_elements']:
+                text = latex_fixer(elem)
+                text = backslash_fixer(text)
+                text = wrap_latex(text)
+                elems.append(text)
+            json_content['key_elements'] = elems
+
+        return json.dumps(json_content)
+
+    except Exception as e:
+        log.error(f"Критическая ошибка парсинга: {e}")
+        return json_content
+
+def get_content_from_ai_message(ai_message):
+    json_content = ai_message.content.strip()
+
+    start_bracket = json_content.find('{')
+    end_bracket = json_content.rfind('}')
+
+    if start_bracket == -1 or end_bracket == -1:
+        return json_content, 'error'
+
+    json_body = json_content[start_bracket:end_bracket + 1]
+
+    # Обработка ответа генератора описаний image_processor
+    if "description" in json_body and "image_type" in json_body and "key_elements" in json_body:
+        desc_match = re.search(r'"description"\s*:\s*"(.*?)"\s*,\s*"image_type"', json_body, re.DOTALL)
+        type_match = re.search(r'"image_type"\s*:\s*"(.*?)"', json_body, re.DOTALL)
+        elements_match = re.search(r'"key_elements"\s*:\s*\[(.*?)\]', json_body, re.DOTALL)
+
+        description = desc_match.group(1) if desc_match else ""
+        image_type = type_match.group(1) if type_match else ""
+        elements = []
+        if elements_match:
+            raw_elements = elements_match.group(1)
+            elements = [e.strip().strip('"').strip("'") for e in raw_elements.split(',') if e.strip()]
+
+        return { "description": description, "image_type": image_type, "key_elements": elements }, 'image_processor'
+
+    # Обработка ответа текстового редактора text_processor
+    elif "text" in json_body:
         start_pattern = re.search(r'"text"\s*:\s*"', json_content)
         start_idx = start_pattern.end()
         end_idx = json_content.rfind('"')
         text_content = json_content[start_idx:end_idx]
 
-        text_content = latex_fixer(text_content)
-        text_content = backslash_fixer(text_content)
-        text_content = wrap_latex(text_content)
+        return {"text": text_content}, 'text_processor'
 
-        fixed_json = '{"text": "' + text_content + '"}'
-        return fixed_json
-
-    except Exception as e:
-        log.error(f"Критическая ошибка парсинга: {e}")
-        return json_content
+    return json_body, 'error'
 
 def backslash_fixer(text):
     # Заменяем более 2 идущих подряд слешей на 2

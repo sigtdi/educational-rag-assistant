@@ -22,8 +22,8 @@ class ParserConfig:
 
     # Опции обработки
     process_marker: bool = False # Для False обязательно наличие текстового файла для этого документа в папке output для Marker
-    process_text: bool = True
-    process_image: bool = False
+    process_text: bool = False
+    process_image: bool = True
     # Если опция маркера не выполнена, то первая опция в цепочке
     # true - выполняется на основе данных из папки output для Marker
     # false - выполняется на основе данных из папки output для предыдущего шага (marker - text - image)
@@ -40,7 +40,8 @@ class ParserConfig:
     image_processor_output: str = "output_image_processor"
 
     # Сохранение
-    save_intermediate: bool = True
+    save_intermediate:  bool = True
+    delete_images:      bool = False
 
 
 @dataclass
@@ -120,7 +121,8 @@ class PDFParser:
             self.text_processor = TextProcessor(
                 model_name=self.config.model_name,
                 output_folder=self.config.text_processor_output,
-                need_output_file=self.config.save_intermediate
+                need_output_file=self.config.save_intermediate,
+                delete_images=self.config.delete_images
             )
 
         if self.config.process_image:
@@ -128,7 +130,8 @@ class PDFParser:
                 image_folder=self.config.images_dir,
                 model_name=self.config.model_name,
                 output_folder=self.config.image_processor_output,
-                need_output_file=self.config.save_intermediate
+                need_output_file=self.config.save_intermediate,
+                delete_images=self.config.delete_images
             )
 
         log.info("Процессоры инициализированы")
@@ -193,9 +196,9 @@ class PDFParser:
         stats.total_corrected_chunks = stats_dict.get('text', {}).get('total_corrected_chunks', 0)
         stats.total_failed_chunks = stats_dict.get('text', {}).get('total_failed_chunks', 0)
 
-        stats.total_images = stats_dict.get('formula', {}).get('total_images_count', 0)
-        stats.described_images = stats_dict.get('formula', {}).get('described_images', 0)
-        stats.failed_images = stats_dict.get('formula', {}).get('failed_images_count', 0)
+        stats.total_images = stats_dict.get('image', {}).get('total_images_count', 0)
+        stats.described_images = stats_dict.get('image', {}).get('described_images', 0)
+        stats.failed_images = stats_dict.get('image', {}).get('failed_images_count', 0)
 
     def get_stats(self):
         if self.stats:
@@ -212,7 +215,7 @@ class PDFParser:
 
 
 if __name__ == "__main__":
-    p = ParserConfig(document_name="Alg-graphs-full.pdf")
+    p = ParserConfig(document_name="Alg-graphs-full_organized.pdf")
     parser = PDFParser(p)
     parser.run()
     log.info(parser.get_stats())
