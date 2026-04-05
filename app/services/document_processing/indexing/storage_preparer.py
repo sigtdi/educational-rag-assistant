@@ -13,13 +13,14 @@ class ChunkStoragePreparer:
     def __init__(
             self,
             output_folder: str = "output_storage_preparer",
+            image_folder: str = Path(__file__).resolve().parent.parent.parent / 'rag/data/images',
             need_output_file: bool = True
     ):
         if need_output_file:
             self.output_folder = Path(__file__).resolve().parent.parent / 'output' / output_folder
             self.output_folder.mkdir(exist_ok=True, parents=True)
 
-        self.image_folder = Path(__file__).resolve().parent.parent.parent / 'rag/data/images'
+        self.image_folder = image_folder
 
         self.need_output_file = need_output_file
         self.document_path = None
@@ -75,14 +76,13 @@ class ChunkStoragePreparer:
         log.info(f"Результат обработки сохранен в {output_path}")
 
     @log.catch
-    def process(self, parent_chunks: list = [], document_path: str | Path = ''):
+    def process(self, parent_chunks: list, document_path: str | Path = ''):
         log.info(
             f"Подготовка чанков к перемещению в бд для файла: {document_path.name}")
 
         start_time = time.time()
 
         self.new_document_stats(parent_chunks, document_path)
-        self.load_chunks()
         self._generate_id_mapping()
         self._transform_hierarchy()
 
@@ -96,7 +96,7 @@ class ChunkStoragePreparer:
         """
         Генерирует UUID для всех parent чанков и мини-чанков.
         """
-        for parent in self.parent_chunks:
+        for parent in tqdm(self.parent_chunks, 'Генерация уникальных id'):
             p_id = str(parent.get("id"))
             if p_id not in self.id_map:
                 self.id_map[p_id] = str(uuid.uuid4())
@@ -111,7 +111,7 @@ class ChunkStoragePreparer:
         Вызывает детальную обработку для каждого чанка.
         """
 
-        for parent_index, parent_group in enumerate(self.parent_chunks):
+        for parent_index, parent_group in enumerate(tqdm(self.parent_chunks, 'Изменение структуры чанков')):
             new_parent_id = self.id_map.get(str(parent_group.get("id")))
             parent_linked_ids = set(parent_group.get("linked_chunks", {}).keys())
 
@@ -223,9 +223,6 @@ class ChunkStoragePreparer:
             except Exception:
                 pass
 
-    def load_chunks(self):
-        with open(self.document_path, 'r', encoding='utf-8') as f:
-            self.parent_chunks = json.load(f)
 
 
 if __name__ == '__main__':

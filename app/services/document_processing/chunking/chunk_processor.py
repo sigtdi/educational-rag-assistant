@@ -388,6 +388,7 @@ class ChunkProcessor:
 
         move_buffer_to_group()
         flush_group()
+        self.process_document_data['total_parent_chunks'] = len(self.parent_chunks)
 
     @log.catch
     def process(self, document_name: str | None = None, input_dir: str | Path = None):
@@ -408,7 +409,8 @@ class ChunkProcessor:
         self.build_parent_chunks()
 
         self.update_stats(time() - start_time)
-        self.save_final_document()
+        if self.need_output_file:
+            self.save_final_document()
 
 if __name__ == '__main__':
     p = ChunkProcessor()

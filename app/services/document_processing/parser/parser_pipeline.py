@@ -8,40 +8,8 @@ from datetime import datetime
 from marker_processor import MarkerProcessor
 from text_processor import TextProcessor
 from image_processor import ImageProcessor
+from parser_config import ParserConfig
 from app.logger_setup import log
-
-@dataclass
-class ParserConfig:
-    """
-    Конфигурация парсера.
-    """
-    document_name: str | None = None # При отсутствии будут браться все файлы из input_dir по очереди
-    input_dir: Path = Path(__file__).resolve().parent.parent.parent.parent / 'data'
-    document_title: str | None = None # Название учебника (только для работы с одним файлом)
-    document_author: str | None = None # Автор учебника (только для работы с одним файлом)
-
-    # Опции обработки
-    process_marker: bool = False # Для False обязательно наличие текстового файла для этого документа в папке output для Marker
-    process_text: bool = False
-    process_image: bool = True
-    # Если опция маркера не выполнена, то первая опция в цепочке
-    # true - выполняется на основе данных из папки output для Marker
-    # false - выполняется на основе данных из папки output для предыдущего шага (marker - text - image)
-    one_step: bool = False
-
-    # Настройки модели
-    model_name: str = 'qwen3.5:9b'
-
-    # Директории
-    text_dir: str = 'extracted_formulas_images'
-    images_dir: str = 'extracted_images'
-    marker_processor_output: str = "output_marker_processor"
-    text_processor_output: str = "output_text_processor"
-    image_processor_output: str = "output_image_processor"
-
-    # Сохранение
-    save_intermediate:  bool = True
-    delete_images:      bool = False
 
 
 @dataclass

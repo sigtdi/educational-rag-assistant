@@ -1,49 +1,37 @@
 from pathlib import Path
 from dataclasses import dataclass
 
-# Корень проекта
-APP_ROOT = Path(__file__).resolve().parents[3]
-
-# Пути
-IMAGES_DIR = APP_ROOT / "rag" / "data" / "images"
-
-# Qdrant
-QDRANT_HOST = "localhost"
-QDRANT_PORT = 6333
-COLLECTION_NAME = "chunks"
-
-# Эмбеддинги
-DENSE_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-SPARSE_MODEL = "Qdrant/bm25"
-
 @dataclass
 class StorageConfig:
     """
     Конфигурация парсера.
     """
-    document_name: str | None = None # При отсутствии будут браться все файлы из input_dir по очереди
-    input_dir: Path = Path(__file__).resolve().parent.parent.parent.parent / 'data' #TODO
+    document_name: str | None = None
+    input_dir: Path = Path(__file__).resolve().parent.parent / 'output' / 'output_chunk_processor'
 
+    parent_chunks_list: list = None # При указании данные не будут загружаться из файла, но имя все равно нужно указать
 
-    # Опции обработки
-    process_marker: bool = False # Для False обязательно наличие текстового файла для этого документа в папке output для Marker
-    process_text: bool = False
-    process_image: bool = True
-    # Если опция маркера не выполнена, то первая опция в цепочке
-    # true - выполняется на основе данных из папки output для Marker
-    # false - выполняется на основе данных из папки output для предыдущего шага (marker - text - image)
-    one_step: bool = False
+    # Настройки для определения полного имени файла
+    has_suffix: bool = True # К имени документа нужно добавить суффикс, не работает при обработке множества файлов
+    suffix: str = '_chunk_processed_json.txt'
 
-    # Настройки модели
-    model_name: str = 'qwen3.5:9b'
+    # Настройки эмбеддингов
+    dense_model = "sentence-transformers/all-MiniLM-L6-v2"
+    sparse_model = "Qdrant/bm25"
+    batch_size: int = 100
+
+    # Настройки qdrant
+    qdrant_host = "localhost"
+    qdrant_port = 6333
+    collection_name = "chunks"
+    qdrant_url = ''
+    dense_vector_name = "fast-all-minilm-l6-v2"
+    sparse_vector_name = "fast-sparse-bm25"
 
     # Директории
-    text_dir: str = 'extracted_formulas_images'
-    images_dir: str = 'extracted_images'
-    marker_processor_output: str = "output_marker_processor"
-    text_processor_output: str = "output_text_processor"
-    image_processor_output: str = "output_image_processor"
+    images_dir: str | Path = Path(__file__).resolve().parents[3] / "rag" / "data" / "images"
+    storage_preparer_output: str = "output_marker_processor"
 
     # Сохранение
     save_intermediate:  bool = True
-    delete_images:      bool = False
+    recreate_db: bool = False

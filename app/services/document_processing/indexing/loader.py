@@ -1,21 +1,23 @@
+from time import time
+from tqdm import tqdm
+
 from langchain_qdrant import FastEmbedSparse, QdrantVectorStore, RetrievalMode
 from langchain_core.documents import Document
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, SparseVectorParams, SparseIndexParams
 from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 
+from app.logger_setup import log
 
 class QdrantLoader:
-
-    DENSE_VECTOR_NAME = "fast-all-minilm-l6-v2"
-    SPARSE_VECTOR_NAME = "fast-sparse-bm25"
-
     def __init__(
         self,
         qdrant_url: str,
         collection_name: str,
         dense_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
         sparse_model_name: str = "Qdrant/bm25",
+        dense_vector_name: str = "fast-all-minilm-l6-v2",
+        sparse_vector_name: str = "fast-sparse-bm25",
         batch_size: int = 100,
     ):
         self.collection_name = collection_name
@@ -25,6 +27,10 @@ class QdrantLoader:
 
         self.dense_embeddings = FastEmbedEmbeddings(model_name=dense_model_name)
         self.sparse_embeddings = FastEmbedSparse(model_name=sparse_model_name)
+        self.dense_vector_name = dense_vector_name
+        self.sparse_vector_name = sparse_vector_name
+
+        self.total_time = 0
 
     def ensure_collection(self, vector_size: int = 384, recreate: bool = False):
         """
@@ -40,22 +46,26 @@ class QdrantLoader:
             self.client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config={
-                    self.DENSE_VECTOR_NAME: VectorParams(
+                    self.dense_vector_name: VectorParams(
                         size=vector_size,
                         distance=Distance.COSINE,
                     )
                 },
                 sparse_vectors_config={
-                    self.SPARSE_VECTOR_NAME: SparseVectorParams(
+                    self.sparse_vector_name: SparseVectorParams(
                         index=SparseIndexParams(on_disk=False)
                     )
                 },
             )
 
+    def get_stats(self):
+        return {'total_time': self.total_time}
+
     def load(self, chunks: list[dict], recreate: bool = False):
         """
         Векторизует и загружает чанки в Qdrant.
         """
+        start_time = time()
         self.ensure_collection(recreate=recreate)
 
         vector_store = QdrantVectorStore(
@@ -64,14 +74,16 @@ class QdrantLoader:
             embedding=self.dense_embeddings,
             sparse_embedding=self.sparse_embeddings,
             retrieval_mode=RetrievalMode.HYBRID,
-            vector_name=self.DENSE_VECTOR_NAME,
-            sparse_vector_name=self.SPARSE_VECTOR_NAME,
+            vector_name=self.dense_vector_name,
+            sparse_vector_name=self.sparse_vector_name,
         )
 
-        for i in range(0, len(chunks), self.batch_size):
+        for i in tqdm(range(0, len(chunks), self.batch_size), 'Векторизация и загрузка чанков'):
             batch = chunks[i : i + self.batch_size]
             documents, ids = self._to_documents(batch)
             vector_store.add_documents(documents=documents, ids=ids)
+
+        self.total_time = time() - start_time
 
     def _to_documents(self, chunks: list[dict]) -> tuple[list[Document], list[str]]:
         """
