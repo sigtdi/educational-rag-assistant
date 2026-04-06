@@ -2,10 +2,10 @@ from time import time
 from tqdm import tqdm
 
 from langchain_qdrant import FastEmbedSparse, QdrantVectorStore, RetrievalMode
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, SparseVectorParams, SparseIndexParams
-from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 
 from app.logger_setup import log
 
@@ -14,10 +14,10 @@ class QdrantLoader:
         self,
         qdrant_url: str,
         collection_name: str,
-        dense_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
-        sparse_model_name: str = "Qdrant/bm25",
-        dense_vector_name: str = "fast-all-minilm-l6-v2",
-        sparse_vector_name: str = "fast-sparse-bm25",
+        dense_model_name: str,
+        sparse_model_name: str,
+        dense_vector_name: str,
+        sparse_vector_name: str,
         batch_size: int = 100,
     ):
         self.collection_name = collection_name
@@ -25,14 +25,17 @@ class QdrantLoader:
 
         self.client = QdrantClient(url=qdrant_url)
 
-        self.dense_embeddings = FastEmbedEmbeddings(model_name=dense_model_name)
+        self.dense_embeddings = HuggingFaceEmbeddings(
+            model_name=dense_model_name,
+            model_kwargs={"device": "cuda"},
+        )
         self.sparse_embeddings = FastEmbedSparse(model_name=sparse_model_name)
         self.dense_vector_name = dense_vector_name
         self.sparse_vector_name = sparse_vector_name
 
         self.total_time = 0
 
-    def ensure_collection(self, vector_size: int = 384, recreate: bool = False):
+    def ensure_collection(self, vector_size: int = 1024, recreate: bool = False):
         """
         Создаёт коллекцию если её нет. При recreate=True пересоздаёт.
         """

@@ -5,10 +5,10 @@ from time import time
 from typing import Dict
 from datetime import datetime
 
-from marker_processor import MarkerProcessor
-from text_processor import TextProcessor
-from image_processor import ImageProcessor
-from parser_config import ParserConfig
+from app.services.document_processing.parser.marker_processor import MarkerProcessor
+from app.services.document_processing.parser.text_processor import TextProcessor
+from app.services.document_processing.parser.image_processor import ImageProcessor
+from app.services.document_processing.parser.parser_config import ParserConfig
 from app.logger_setup import log
 
 
@@ -55,13 +55,10 @@ class PDFParser:
     def __init__(self, config: ParserConfig):
         self.config = config
 
-        if self.config.document_name:
-            self.stats = ParserStats(
-                document_title=Path(config.document_name).stem,
-                start_time=datetime.now().isoformat()
-            )
-        else:
-            self.stats_list = [] # Список PipelineStats для каждого документа
+        self.stats = ParserStats(
+            document_title=Path(config.document_name).stem,
+            start_time=datetime.now().isoformat()
+        )
 
         self.marker_processor = None
         self.text_processor = None
@@ -131,10 +128,13 @@ class PDFParser:
                 return
             prev_step = step
 
-    def process_one_document(self, document_path: str | None, stats: ParserStats):
-        """
-        Обработка одного документа: запуск всех выбранных опций и сохранение статистики
-        """
+    def get_stats(self):
+        return self.stats
+
+    def run(self):
+        self.initialize_processors()
+        document_path = self.config.input_dir / self.config.document_name
+
         start_time = time()
         self.init_chunks(Path(document_path).stem)
         stats_dict = {}
@@ -147,43 +147,25 @@ class PDFParser:
                 else:
                     self.chunks = processor.process(chunks=self.chunks, document_path=document_path)
 
-                setattr(stats, f'{step}_status', 'done')
+                setattr(self.stats, f'{step}_status', 'done')
 
                 stats_dict[step] = processor.get_stats()
 
-        stats.end_time = datetime.now().isoformat()
-        stats.total_duration_seconds = time() - start_time
-        stats.marker_process_time = stats_dict.get('marker', {}).get('total_time', 0)
-        stats.text_process_time = stats_dict.get('text', {}).get('total_time', 0)
-        stats.images_process_time = stats_dict.get('image', {}).get('total_time', 0)
+        self.stats.end_time = datetime.now().isoformat()
+        self.stats.total_duration_seconds = time() - start_time
+        self.stats.marker_process_time = stats_dict.get('marker', {}).get('total_time', 0)
+        self.stats.text_process_time = stats_dict.get('text', {}).get('total_time', 0)
+        self.stats.images_process_time = stats_dict.get('image', {}).get('total_time', 0)
 
-        stats.total_pages = stats_dict.get('marker', {}).get('total_pages', 0)
-        stats.total_chunks = stats_dict.get('marker', {}).get('total_chunks', 0)
+        self.stats.total_pages = stats_dict.get('marker', {}).get('total_pages', 0)
+        self.stats.total_chunks = stats_dict.get('marker', {}).get('total_chunks', 0)
 
-        stats.total_chunks_checked_via_vlm = stats_dict.get('text', {}).get('total_chunks_checked_via_vlm', 0)
-        stats.total_corrected_chunks = stats_dict.get('text', {}).get('total_corrected_chunks', 0)
-        stats.total_failed_chunks = stats_dict.get('text', {}).get('total_failed_chunks', 0)
+        self.stats.total_chunks_checked_via_vlm = stats_dict.get('text', {}).get('total_chunks_checked_via_vlm', 0)
+        self.stats.total_corrected_chunks = stats_dict.get('text', {}).get('total_corrected_chunks', 0)
+        self.stats.total_failed_chunks = stats_dict.get('text', {}).get('total_failed_chunks', 0)
 
-        stats.total_images = stats_dict.get('image', {}).get('total_images_count', 0)
-        stats.described_images = stats_dict.get('image', {}).get('described_images', 0)
-        stats.failed_images = stats_dict.get('image', {}).get('failed_images_count', 0)
+        self.stats.total_images = stats_dict.get('image', {}).get('total_images_count', 0)
+        self.stats.described_images = stats_dict.get('image', {}).get('described_images', 0)
+        self.stats.failed_images = stats_dict.get('image', {}).get('failed_images_count', 0)
 
-    def get_stats(self):
-        if self.stats:
-            return self.stats
-        return self.stats_list
-
-    def run(self):
-        self.initialize_processors()
-        if self.config.document_name:
-            document_path = self.config.input_dir / self.config.document_name
-            self.process_one_document(document_path=str(document_path), stats=self.stats)
-        else:
-            self.process_one_document(document_path='ff', stats=self.stats_list[-1])
-
-
-if __name__ == "__main__":
-    p = ParserConfig(document_name="Alg-graphs-full_organized.pdf")
-    parser = PDFParser(p)
-    parser.run()
-    log.info(parser.get_stats())
+        return self.chunks

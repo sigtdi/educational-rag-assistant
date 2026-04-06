@@ -1,0 +1,47 @@
+#  RAG Pipeline — конфигурация
+#  Пути к папкам задаются в коде (global_config.py)
+
+# Главный оркестратор
+pipeline:
+  # Какие этапы выполнять
+  run_parser:  false
+  run_chunker: false
+  run_loader:  true
+
+# Парсер
+parser:
+  # Какие этапы выполнять
+  process_marker: true     # false → нужен готовый output_marker_processor
+  process_text:   true
+  process_image:  true
+  one_step:       false     # true → каждый этап берёт данные только из marker-output
+
+  # Модель
+  model_name: "qwen3.5:9b"
+
+  # Поведение
+  save_intermediate: true
+  delete_images:     false
+
+# Чанкер
+chunker:
+  save_intermediate: true
+
+# Загрузчик
+loader:
+  # Эмбеддинги
+  dense_model:  "intfloat/multilingual-e5-large-instruct"
+  sparse_model: "Qdrant/bm25"
+  batch_size:   100
+
+  # Qdrant
+  qdrant_host: "localhost"
+  qdrant_port: 6333
+  qdrant_url:  ""           # если задан — host/port игнорируются
+  collection_name:     "chunks"
+  dense_vector_name:   "fast-multilingual-e5-large-instruct"
+  sparse_vector_name:  "fast-sparse-bm25"
+
+  # Поведение
+  save_intermediate: true
+  recreate_db:       true

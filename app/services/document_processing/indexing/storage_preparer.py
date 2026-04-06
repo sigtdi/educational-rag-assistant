@@ -12,9 +12,9 @@ from app.logger_setup import log
 class ChunkStoragePreparer:
     def __init__(
             self,
-            output_folder: str = "output_storage_preparer",
-            image_folder: str = Path(__file__).resolve().parent.parent.parent / 'rag/data/images',
-            need_output_file: bool = True
+            output_folder: str,
+            image_folder: str,
+            need_output_file: bool
     ):
         if need_output_file:
             self.output_folder = Path(__file__).resolve().parent.parent / 'output' / output_folder
@@ -52,7 +52,7 @@ class ChunkStoragePreparer:
         self.id_map = {}
 
         self.process_document_data = {
-            'total_chunks': len(self.chunks),  # Количество итоговых чанков чанков
+            'total_chunks': 0,  # Количество итоговых чанков чанков
             'result_document_path': f"{Path(self.document_path).stem}_storage_preparer_json.txt",
             'need_save': self.need_output_file,
             'total_time': 0.0
@@ -222,10 +222,3 @@ class ChunkStoragePreparer:
                 img.save(filepath, "PNG", optimize=True)
             except Exception:
                 pass
-
-
-
-if __name__ == '__main__':
-    p = ChunkStoragePreparer()
-    path = Path(__file__).resolve().parent.parent / 'output/output_chunk_processor' / "Alg-graphs-full_images_processed_json_chunk_processed_json.txt"
-    p.process(document_path=path)

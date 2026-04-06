@@ -239,7 +239,7 @@ class ImageProcessor:
             'failed_images_count': 0,
             'described_images': 0,
             'failed_chunks': [],
-            'result_document_name': f"{Path(self.document_path).stem}_images_processed_json.txt",
+            'result_document_name': f"{Path(self.document_path).stem}_image_processed_json.txt",
             'need_save': self.need_output_file,
             'total_time': 0
         }

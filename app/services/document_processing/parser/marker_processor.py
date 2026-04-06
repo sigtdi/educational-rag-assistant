@@ -61,7 +61,7 @@ class MarkerProcessor:
             torch.cuda.ipc_collect()
 
     @log.catch
-    def process(self, document_path: str):
+    def process(self, document_path: str | Path):
         """
         Основная функция обработки файла через Marker.
         """
@@ -90,7 +90,7 @@ class MarkerProcessor:
             renderer=renderer_cls_string
         )
 
-        self.rendered_text = converter(document_path)
+        self.rendered_text = converter(str(document_path))
 
         # Обработка парсинга Marker - извлечение метаданных, приведение текста к удобному виду, исправление кодировки
         self.processing_chunks()

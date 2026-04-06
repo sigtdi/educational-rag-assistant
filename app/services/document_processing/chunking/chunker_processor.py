@@ -4,16 +4,15 @@ from time import time
 from pathlib import Path
 from tqdm import tqdm
 
+from app.services.document_processing.chunking.chunker_config import ChunkerConfig
 from app.logger_setup import log
 
 class ChunkProcessor:
-    def __init__(
-            self,
-            output_folder:      str         = "output_chunk_processor",
-            need_output_file:   bool        = True
-    ):
-        if need_output_file:
-            self.output_folder = Path(__file__).resolve().parent.parent / 'output' / output_folder
+    def __init__(self, config: ChunkerConfig):
+        self.config = config
+
+        if self.config.save_intermediate:
+            self.output_folder = self.config.output_dir
             self.output_folder.mkdir(exist_ok=True, parents=True)
 
         self.document_path = None
@@ -21,7 +20,6 @@ class ChunkProcessor:
         self.parent_chunks = []
         self.anchor_dict: dict[str, list[str]] = {}
 
-        self.need_output_file = need_output_file
         self.max_continuation_chunks = 6
         self.max_len_parent_chunk = 10
 
@@ -59,25 +57,37 @@ class ChunkProcessor:
             'total_final_chunks': 0,  # Количество оставленных мини-чанков
             'unresolved_refs': 0,  # Количество ссылок на неопределенную метку
             'result_document_name': '',
-            'need_save': self.need_output_file,
+            'saved': self.config.save_intermediate,
             'total_time': 0
         }
 
     def load_chunks(self):
-        with open(self.document_path, 'r', encoding='utf-8') as f:
-            self.chunks = json.load(f)
+        # Определяем путь, учитывая суффикс
+        suffix = self.config.suffix if (self.config.has_suffix and self.config.document_name) else ''
+        file_path = self.config.input_dir / (str(Path(self.config.document_name).stem) + suffix)
 
-    def new_document_stats(self, document_path):
-        self.document_path = document_path
-        self.load_chunks()
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                self.chunks = json.load(f)
+            log.info(f"Успешно загружен файл с чанками для старта обработки: {file_path}")
+        except FileNotFoundError:
+            log.error(f"Ошибка: файл не найден по пути {file_path}")
+        except json.JSONDecodeError:
+            log.error(f"Ошибка: некорректный JSON в файле {file_path}")
+
+    def new_document_stats(self, document_name, chunks = None):
+        if chunks:
+            self.chunks = chunks
+        else:
+            self.load_chunks()
 
         self.process_document_data = {
             'total_chunks': len(self.chunks),  # Общее количество начальных мини-чанков
             'total_parent_chunks': 0,  # Количество больших групп из объединенных мини-чанков
             'total_final_chunks': 0,  # Количество оставленных мини-чанков
             'unresolved_refs': 0,  # Количество ссылок на неопределенную метку
-            'result_document_name': f"{Path(self.document_path).stem}_chunk_processed_json.txt",
-            'need_save': self.need_output_file,
+            'result_document_name': f"{Path(document_name).stem}_chunk_processed_json.txt",
+            'saved': self.config.save_intermediate,
             'total_time': 0
         }
 
@@ -91,6 +101,9 @@ class ChunkProcessor:
         """
         Сохранения результата обработки документа.
         """
+        if not self.config.save_intermediate:
+            return
+
         output_path = self.output_folder / self.process_document_data['result_document_name']
 
         with open(output_path, 'w', encoding='utf-8') as f:
@@ -391,27 +404,18 @@ class ChunkProcessor:
         self.process_document_data['total_parent_chunks'] = len(self.parent_chunks)
 
     @log.catch
-    def process(self, document_name: str | None = None, input_dir: str | Path = None):
+    def run(self, chunks: list | None = None):
         start_time = time()
-        if not input_dir:
-            input_dir = Path(__file__).resolve().parent.parent / 'output' / 'output_image_processor'
-        else:
-            input_dir = Path(input_dir)
+        log.info(f'Обработка чанков для документа {Path(self.config.document_name).name}')
 
-        if not document_name:
-            pass
-
-        log.info(f'Обработка чанков для документа {Path(document_name).name}')
-        self.new_document_stats(input_dir / document_name)
+        self.new_document_stats(document_name = self.config.document_name, chunks=chunks)
         self.assign_section_headers()
         self.detect_content_labels()
         self.collect_references()
         self.build_parent_chunks()
 
         self.update_stats(time() - start_time)
-        if self.need_output_file:
-            self.save_final_document()
 
-if __name__ == '__main__':
-    p = ChunkProcessor()
-    p.process(document_name="Alg-graphs-full_images_processed_json.txt")
+        self.save_final_document()
+
+        return self.parent_chunks
