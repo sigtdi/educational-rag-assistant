@@ -36,7 +36,7 @@ class ChunkStoragePreparer:
         ]
 
         self.process_document_data = {
-            'total_chunks': len(self.chunks),  # Количество итоговых чанков чанков
+            'total_chunks': len(self.chunks),  # Количество итоговых чанков
             'result_document_path': '',
             'need_save': self.need_output_file,
             'total_time': 0.0

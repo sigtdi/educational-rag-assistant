@@ -243,8 +243,8 @@ class ProcessingPipeline:
 
 if __name__ == "__main__":
     # Один файл
-    pipeline = ProcessingPipeline.from_yaml(document_name="Alg-graphs-full_organized.pdf")
-    # Все файлы в папке:
+    pipeline = ProcessingPipeline.from_yaml(document_name="Alg-graphs-full.pdf")
+    # Все файлы в папке
     # pipeline = ProcessingPipeline.from_yaml()
 
     stats = pipeline.run()

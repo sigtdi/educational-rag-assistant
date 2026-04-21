@@ -97,16 +97,16 @@ class QdrantLoader:
 
         for chunk in chunks:
             metadata = {
-                "type":           chunk.get("type", "chunk"),
-                "section_path":   chunk.get("section_path", ""),
-                "block_type":     chunk.get("block_type", ""),
-                "parent_id":      chunk.get("parent_group_id", ""),
-                "internal_links": chunk.get("internal_links", {}),
-                "external_links": chunk.get("external_links", {}),
-                "page":           chunk.get("page"),
-                "bbox":           chunk.get("bbox"),
-                "file_name":      chunk.get("file_name", ""),
-                "text":           chunk.get("text", ""),
+                "type":             chunk.get("type", "chunk"),
+                "section_path":     chunk.get("section_path", ""),
+                "inner_id":         chunk.get("inner_id", 0),
+                "parent_id":        chunk.get("parent_group_id", ""),
+                "internal_links":   chunk.get("internal_links", {}),
+                "external_links":   chunk.get("external_links", {}),
+                "page":             chunk.get("page"),
+                "bbox":             chunk.get("bbox"),
+                "file_name":        chunk.get("file_name", ""),
+                "text":             chunk.get("text", ""),
             }
 
             if "image_path" in chunk:

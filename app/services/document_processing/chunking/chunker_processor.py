@@ -127,7 +127,8 @@ class ChunkProcessor:
 
             text = chunk["text"].strip()
 
-            if not section_header_pattern.match(text):
+            if not section_header_pattern.match(text) or any(re.search(rf'\b{word}\b', text, re.IGNORECASE)
+                                                                for word in ['for', 'else', 'if', 'do', 'while']):
                 # Ошибочное типирование от Marker
                 chunk["block_type"] = "Text"
                 chunk["section_path"] = self._build_section_path(section_stack)
@@ -338,9 +339,12 @@ class ChunkProcessor:
                         unresolved.append(ref)
                         seen_unresolved.add(ref)
 
-            # Каждому чанку в группе подписываем id его родительского чанка
+            # Каждому чанку в группе подписываем id его родительского чанка и порядковый номер внутри группы
+            inner_id = 1
             for c in current_group:
                 c['parent_group'] = parent_id
+                c['inner_id'] = inner_id
+                inner_id += 1
 
             self.parent_chunks.append({
                 "id": parent_id,
