@@ -112,7 +112,7 @@ class ProcessingPipeline:
         """
         if output_path is None:
             output_path = (
-                Paths.output
+                Paths.stats_out
                 / f"pipeline_stats_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             )
         output_path.parent.mkdir(parents=True, exist_ok=True)

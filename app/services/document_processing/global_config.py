@@ -20,6 +20,7 @@ class PipelineStagesConfig:
     run_chunker: bool = True
     run_loader:  bool = True
 
+
 # Пути
 class Paths:
     root    = _PROJECT_ROOT
@@ -33,6 +34,7 @@ class Paths:
     image_out   = output / "output_image_processor"
     chunk_out   = output / "output_chunk_processor"
     storage_out = output / "output_storage_preparer"
+    stats_out = output / "stats_output"
 
 
 @dataclass
