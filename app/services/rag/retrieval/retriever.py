@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from langchain_core.documents import Document
@@ -12,51 +10,39 @@ from qdrant_client import QdrantClient
 from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 from qdrant_client.models import Record
 
-logger = logging.getLogger(__name__)
-
-@dataclass
-class RetrieverConfig:
-    # Qdrant
-    qdrant_url: str
-    collection_name: str
-    dense_vector_name: str = "dense"
-    sparse_vector_name: str = "sparse"
-
-    # Embedding model
-    embedding_model_name: str = "intfloat/multilingual-e5-large-instruct"
-    embedding_query_instruction: str = (
-        "Instruct: Найди релевантные фрагменты учебника по алгоритмам\nQuery: "
-    )
-
-    # Paths
-    images_dir: str = "rag/data/images"
-
-    # Search
-    top_k: int = 5
+from app.logger_setup import log
+from app.services.rag.retrieval.retriever_config import RetrieverConfig
 
 
 @dataclass
 class ChunkResult:
     id: str
+    section_header: str
     text: str
     metadata: dict[str, Any]
     is_picture: bool = False
     image_path: str | None = None
+    rerank_score: float | None = None
 
     @classmethod
-    def from_document(cls, doc: Document, images_dir: Path) -> "ChunkResult":
-        chunk_id = doc.metadata.get("id", "")
-        is_picture = doc.metadata.get("type") == "picture"
-        image_path = None
-        if is_picture and chunk_id:
-            candidate = images_dir / f"{chunk_id}.png"
-            image_path = str(candidate) if candidate.exists() else str(candidate)
+    def from_document(
+        cls,
+        doc: Document,
+        rerank_score: float | None = None,
+    ) -> "ChunkResult":
+        meta = doc.metadata
+        chunk_id = meta.get("id", "")
+        is_picture = meta.get("type") == "picture"
+        image_path = meta.get("image_path") if is_picture else None
+
         return cls(
             id=chunk_id,
-            text=doc.page_content,
-            metadata=doc.metadata,
+            section_header=meta.get("section_path", ""),
+            text=meta.get("text", ""),
+            metadata=meta,
             is_picture=is_picture,
             image_path=image_path,
+            rerank_score=rerank_score,
         )
 
 
@@ -65,45 +51,82 @@ class SearchResult:
     top_chunks: list[ChunkResult]
     group_chunks: list[ChunkResult]
     mentioned_chunks: list[ChunkResult]
-    mentioned_labels: dict[str, str] = field(default_factory=dict)
-    # mentioned_labels: chunk_id -> подпись ("Определение 6" и т.п.)
+    mentioned_labels: dict[str, str] = field(default_factory=dict) # chunk_id: подпись ("Определение 6" и т.п.)
+
 
 class HybridRetriever:
     """
-    Гибридный поиск (BM25 sparse + dense vectors) через Qdrant + LangChain.
+    Гибридный поиск c использованием реранкера.
     """
 
     def __init__(self, config: RetrieverConfig) -> None:
         self.config = config
-        self.images_dir = Path(config.images_dir)
 
-        self._client = QdrantClient(url=config.qdrant_url)
+        self._client = QdrantClient(url=self.config.qdrant_url)
 
         self._embeddings = HuggingFaceEmbeddings(
-            model_name=config.embedding_model_name,
-            encode_kwargs={"normalize_embeddings": True},
-            query_instruction=config.embedding_query_instruction,
-            embed_instruction="",
+            model_name=self.config.dense_model,
+            model_kwargs={
+                "device": "cpu",
+                "prompts": {"query": self.config.embedding_query_instruction},
+                "default_prompt_name": "query",
+            },
         )
 
-        self._sparse_embeddings = FastEmbedSparse(model_name="Qdrant/bm25")
+        self._sparse_embeddings = FastEmbedSparse(
+            model_name=self.config.sparse_model
+        )
 
         self._vector_store = QdrantVectorStore(
             client=self._client,
-            collection_name=config.collection_name,
+            collection_name=self.config.collection_name,
             embedding=self._embeddings,
             sparse_embedding=self._sparse_embeddings,
             retrieval_mode=RetrievalMode.HYBRID,
-            vector_name=config.dense_vector_name,
-            sparse_vector_name=config.sparse_vector_name,
+            vector_name=self.config.dense_vector_name,
+            sparse_vector_name=self.config.sparse_vector_name,
         )
 
-    def search(self, query: str) -> SearchResult:
-        """Основной метод поиска."""
-        top_docs = self._hybrid_search(query)
-        top_chunks = [ChunkResult.from_document(d, self.images_dir) for d in top_docs]
+        # Инициализация реранкера
+        self._reranker = None
+        if self.config.reranker_model_name:
+            self._reranker = self._load_reranker(self.config.reranker_model_name)
 
+    @classmethod
+    def from_yaml(cls) -> "HybridRetriever":
+        """
+        Читает config.yaml и создаёт HybridRetriever.
+        """
+        config = RetrieverConfig.from_yaml()
+        return cls(config)
+
+    @staticmethod
+    def _load_reranker(model_name: str):
+        """Загружает cross-encoder реранкер."""
+        try:
+            from sentence_transformers import CrossEncoder
+            log.info("Loading reranker: %s", model_name)
+            return CrossEncoder(model_name, device="cuda")
+        except ImportError as e:
+            log.warning(
+                "sentence-transformers не установлен, reranker недоступен: %s", e
+            )
+            return None
+
+    def search(self, query: str) -> SearchResult:
+        """
+        Основной метод поиска.
+        """
+        # Гибридный поиск с запасом
+        candidates = self._hybrid_search(query, k=self.config.top_k_fetch)
+
+        # Rerank + фильтрация по score threshold
+        top_chunks = self._rerank_and_filter(query, candidates)
+
+        # Расширение групп
         group_chunks = self._expand_groups(top_chunks)
+
+        # Разрешение external links
         mentioned_chunks, mentioned_labels = self._resolve_external_links(
             top_chunks + group_chunks
         )
@@ -115,24 +138,68 @@ class HybridRetriever:
             mentioned_labels=mentioned_labels,
         )
 
-    def _hybrid_search(self, query: str) -> list[Document]:
-        """
-        Гибридный поиск.
-        """
-        docs = self._vector_store.similarity_search(query, k=self.config.top_k)
+    def _hybrid_search(self, query: str, k: int) -> list[Document]:
+        docs = self._vector_store.similarity_search(query, k=k)
         for doc in docs:
-            # langchain-qdrant >= 0.1.3 пишет id под ключом "_id"
             point_id = doc.metadata.pop("_id", None) or doc.metadata.get("id", "")
             doc.metadata["id"] = str(point_id)
         return docs
 
+    def _rerank_and_filter(
+        self, query: str, docs: list[Document]
+    ) -> list[ChunkResult]:
+        """
+        Выполняет ранжирование чанков с помощью реранкера, если он включен.
+        """
+        if self._reranker is None:
+            return [
+                ChunkResult.from_document(d)
+                for d in docs[: self.config.top_k_final]
+            ]
+
+        pairs = [(query, d.page_content) for d in docs]
+        scores: list[float] = self._reranker.predict(pairs).tolist()
+
+        scored = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)
+
+        result: list[ChunkResult] = []
+        for score, doc in scored:
+            if (
+                self.config.reranker_score_threshold is not None
+                and score < self.config.reranker_score_threshold
+            ):
+                log.debug(
+                    "Filtered out chunk (score=%.3f < %.3f): %s",
+                    score,
+                    self.config.reranker_score_threshold,
+                    doc.metadata.get("id", ""),
+                )
+                continue
+            result.append(ChunkResult.from_document(doc, rerank_score=score))
+            if len(result) >= self.config.top_k_final:
+                break
+
+        return result
+
     def _expand_groups(self, top_chunks: list[ChunkResult]) -> list[ChunkResult]:
         """
         Дозапрашивает все чанки групп, к которым принадлежат top_chunks.
+        Если задан group_expand_score_threshold — расширяет только для
+        чанков с rerank_score >= порога (слабые чанки не тянут за собой группу).
         """
+        threshold = self.config.group_expand_score_threshold
+
+        eligible = [
+            c
+            for c in top_chunks
+            if threshold is None
+            or c.rerank_score is None
+            or c.rerank_score >= threshold
+        ]
+
         group_ids = {
             c.metadata.get("parent_id")
-            for c in top_chunks
+            for c in eligible
             if c.metadata.get("parent_id")
         }
         if not group_ids:
@@ -153,7 +220,7 @@ class HybridRetriever:
                 )
             )
             for doc in docs:
-                chunk = ChunkResult.from_document(doc, self.images_dir)
+                chunk = ChunkResult.from_document(doc)
                 if chunk.id not in already_ids:
                     result.append(chunk)
                     already_ids.add(chunk.id)
@@ -163,11 +230,8 @@ class HybridRetriever:
     def _resolve_external_links(
         self, chunks: list[ChunkResult]
     ) -> tuple[list[ChunkResult], dict[str, str]]:
-        """
-        Собирает external_links из всех переданных чанков и дозапрашивает их.
-        """
         existing_ids = {c.id for c in chunks}
-        link_map: dict[str, str] = {}  # uuid -> подпись
+        link_map: dict[str, str] = {}
 
         for chunk in chunks:
             links = chunk.metadata.get("external_links") or {}
@@ -181,23 +245,15 @@ class HybridRetriever:
             return [], {}
 
         docs = self._fetch_by_ids(list(link_map.keys()))
-        mentioned_chunks = [ChunkResult.from_document(d, self.images_dir) for d in docs]
+        mentioned_chunks = [ChunkResult.from_document(d) for d in docs]
         mentioned_labels = {
             c.id: link_map[c.id]
             for c in mentioned_chunks
             if c.id in link_map
         }
-
         return mentioned_chunks, mentioned_labels
 
     def _payload_to_document(self, record: Record) -> Document:
-        """
-        Конвертирует qdrant Record в LangChain Document.
-
-        LangChain сохраняет данные так:
-          payload["page_content"] — текст для поиска (search_text)
-          payload["metadata"]     — все остальные поля из _to_documents()
-        """
         payload = record.payload or {}
         metadata = payload.get("metadata", {})
         return Document(
@@ -206,10 +262,8 @@ class HybridRetriever:
         )
 
     def _scroll_by_filter(self, scroll_filter: Filter) -> list[Document]:
-        """Листает все точки коллекции по фильтру."""
         docs: list[Document] = []
         offset = None
-
         while True:
             records, next_offset = self._client.scroll(
                 collection_name=self.config.collection_name,
@@ -221,18 +275,14 @@ class HybridRetriever:
             )
             for record in records:
                 docs.append(self._payload_to_document(record))
-
             if next_offset is None:
                 break
             offset = next_offset
-
         return docs
 
     def _fetch_by_ids(self, ids: list[str]) -> list[Document]:
-        """Получает чанки по списку UUID."""
         if not ids:
             return []
-
         records = self._client.retrieve(
             collection_name=self.config.collection_name,
             ids=ids,
@@ -240,3 +290,5 @@ class HybridRetriever:
             with_vectors=False,
         )
         return [self._payload_to_document(r) for r in records]
+
+
