@@ -1,19 +1,33 @@
 #  RAG Pipeline — конфигурация
-#  Пути к папкам задаются в коде (global_config.py)
+#  Пути к папкам задаются в коде
+
+_shared:
+  qdrant: &qdrant
+    qdrant_host: "localhost"
+    qdrant_port: 6333
+    qdrant_url:  ""           # если задан — host/port игнорируются
+    collection_name:     "chunks"
+    dense_vector_name:   "fast-multilingual-e5-large-instruct"
+    sparse_vector_name:  "fast-sparse-bm25"
+
+  embeddings: &embeddings
+    dense_model:  "intfloat/multilingual-e5-large-instruct"
+    sparse_model: "Qdrant/bm25"
+
 
 # Главный оркестратор
 pipeline:
   # Какие этапы выполнять
-  run_parser:  false
+  run_parser:  true
   run_chunker: false
-  run_loader:  true
+  run_loader:  false
 
 # Парсер
 parser:
   # Какие этапы выполнять
-  process_marker: true     # false → нужен готовый output_marker_processor
+  process_marker: false     # false → нужен готовый output_marker_processor
   process_text:   true
-  process_image:  true
+  process_image:  false
   one_step:       false     # true → каждый этап берёт данные только из marker-output
 
   # Модель
@@ -21,7 +35,7 @@ parser:
 
   # Поведение
   save_intermediate: true
-  delete_images:     false
+  delete_images:     true
 
 # Чанкер
 chunker:
@@ -29,19 +43,28 @@ chunker:
 
 # Загрузчик
 loader:
-  # Эмбеддинги
-  dense_model:  "intfloat/multilingual-e5-large-instruct"
-  sparse_model: "Qdrant/bm25"
-  batch_size:   100
+  <<: [*qdrant, *embeddings]
+  batch_size: 100
+  vector_size: 1024
 
-  # Qdrant
-  qdrant_host: "localhost"
-  qdrant_port: 6333
-  qdrant_url:  ""           # если задан — host/port игнорируются
-  collection_name:     "chunks"
-  dense_vector_name:   "fast-multilingual-e5-large-instruct"
-  sparse_vector_name:  "fast-sparse-bm25"
-
-  # Поведение
   save_intermediate: true
-  recreate_db:       true
+  recreate_db:       false
+
+# Поиск
+retriever:
+  <<: [*qdrant, *embeddings]
+
+  embedding_query_instruction: "Instruct: Найди релевантные фрагменты учебника по алгоритмам\nQuery:"
+
+  reranker_model_name: "DiTy/cross-encoder-russian-msmarco"
+  reranker_score_threshold: 0.0
+
+  top_k_fetch: 10
+  top_k_final: 5
+
+  group_expand_score_threshold: 0.5
+
+# Агент
+agent:
+  model_name: "qwen2.5:14b"
+  temperature: 0.0
