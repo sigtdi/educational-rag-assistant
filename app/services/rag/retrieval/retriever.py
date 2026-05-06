@@ -9,6 +9,7 @@ from langchain_qdrant import FastEmbedSparse, QdrantVectorStore, RetrievalMode
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 from qdrant_client.models import Record
+from sentence_transformers import CrossEncoder
 
 from app.logger_setup import log
 from app.services.rag.retrieval.retriever_config import RetrieverConfig
@@ -101,16 +102,16 @@ class HybridRetriever:
         return cls(config)
 
     @staticmethod
-    def _load_reranker(model_name: str):
-        """Загружает cross-encoder реранкер."""
+    def _load_reranker(model_name: str) -> CrossEncoder | None:
+        """
+        Загружает cross-encoder реранкер.
+        """
         try:
             from sentence_transformers import CrossEncoder
-            log.info("Loading reranker: %s", model_name)
+            log.info(f'Загружен реранкер')
             return CrossEncoder(model_name, device="cuda")
         except ImportError as e:
-            log.warning(
-                "sentence-transformers не установлен, reranker недоступен: %s", e
-            )
+            log.warning(f"Ошибка при загрузке реранкера: {e}")
             return None
 
     def search(self, query: str) -> SearchResult:
@@ -120,16 +121,14 @@ class HybridRetriever:
         # Гибридный поиск с запасом
         candidates = self._hybrid_search(query, k=self.config.top_k_fetch)
 
-        # Rerank + фильтрация по score threshold
+        # Rerank + фильтрация по score_threshold
         top_chunks = self._rerank_and_filter(query, candidates)
 
         # Расширение групп
         group_chunks = self._expand_groups(top_chunks)
 
         # Разрешение external links
-        mentioned_chunks, mentioned_labels = self._resolve_external_links(
-            top_chunks + group_chunks
-        )
+        mentioned_chunks, mentioned_labels = self._resolve_external_links(top_chunks + group_chunks)
 
         return SearchResult(
             top_chunks=top_chunks,
@@ -139,17 +138,18 @@ class HybridRetriever:
         )
 
     def _hybrid_search(self, query: str, k: int) -> list[Document]:
+        """
+        Гибридный поиск.
+        """
         docs = self._vector_store.similarity_search(query, k=k)
         for doc in docs:
             point_id = doc.metadata.pop("_id", None) or doc.metadata.get("id", "")
             doc.metadata["id"] = str(point_id)
         return docs
 
-    def _rerank_and_filter(
-        self, query: str, docs: list[Document]
-    ) -> list[ChunkResult]:
+    def _rerank_and_filter(self, query: str, docs: list[Document]) -> list[ChunkResult]:
         """
-        Выполняет ранжирование чанков с помощью реранкера, если он включен.
+        Ранжирование чанков с помощью реранкера, если он включен.
         """
         if self._reranker is None:
             return [
@@ -183,9 +183,7 @@ class HybridRetriever:
 
     def _expand_groups(self, top_chunks: list[ChunkResult]) -> list[ChunkResult]:
         """
-        Дозапрашивает все чанки групп, к которым принадлежат top_chunks.
-        Если задан group_expand_score_threshold — расширяет только для
-        чанков с rerank_score >= порога (слабые чанки не тянут за собой группу).
+        Получение групп чанков, прошедших порог схожести.
         """
         threshold = self.config.group_expand_score_threshold
 
@@ -227,9 +225,10 @@ class HybridRetriever:
 
         return result
 
-    def _resolve_external_links(
-        self, chunks: list[ChunkResult]
-    ) -> tuple[list[ChunkResult], dict[str, str]]:
+    def _resolve_external_links(self, chunks: list[ChunkResult]) -> tuple[list[ChunkResult], dict[str, str]]:
+        """
+        Получение чанков, на которые есть ссылки в найденных чанках.
+        """
         existing_ids = {c.id for c in chunks}
         link_map: dict[str, str] = {}
 
@@ -292,3 +291,44 @@ class HybridRetriever:
         return [self._payload_to_document(r) for r in records]
 
 
+if __name__ == "__main__":
+
+    retriever = HybridRetriever.from_yaml()
+
+    queries = [
+        "Что такое ориентированный граф?",
+        "Как работает алгоритм Дейкстры?",
+        "Чем отличается обход в глубину от обхода в ширину?",
+        "Что такое минимальное остовное дерево?",
+        "Как найти сообщество в социальной сети с помощью максимального потока?",
+    ]
+
+    for query in queries:
+        print("\n" + "=" * 70)
+        print(f"ЗАПРОС: {query}")
+        print("=" * 70)
+
+        result = retriever.search(query)
+
+        print(f"\n── Топ чанки ({len(result.top_chunks)}):")
+        for c in result.top_chunks:
+            marker = "[🖼 picture]" if c.is_picture else "[text]"
+            score_str = f" score={c.rerank_score:.3f}" if c.rerank_score is not None else ""
+            print(f"  {marker} [{c.section_header}]{score_str}")
+            print(f"         {c.text.strip()}")
+
+        print(f"\n── Чанки групп ({len(result.group_chunks)} доп.):")
+        for c in result.group_chunks:
+            marker = "[picture]" if c.is_picture else "[text]"
+            print(f"  {marker} [{c.section_header}] {c.text.strip()}")
+
+        if result.mentioned_chunks:
+            print(f"\n── Упомянутые объекты ({len(result.mentioned_chunks)}):")
+            for c in result.mentioned_chunks:
+                label = result.mentioned_labels.get(c.id, "")
+                marker = "[picture]" if c.is_picture else "[text]"
+                print(f"  {marker} «{label}»: {c.text.strip()}")
+                if c.is_picture and c.image_path:
+                    print(f"         image: {c.image_path}")
+        else:
+            print("\n── Упомянутые объекты: нет")
