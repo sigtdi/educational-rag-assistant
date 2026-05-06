@@ -18,6 +18,7 @@ class StorageConfig:
     dense_model: str
     sparse_model: str
     batch_size: int
+    vector_size: int
 
     # Настройки qdrant
     qdrant_host: str

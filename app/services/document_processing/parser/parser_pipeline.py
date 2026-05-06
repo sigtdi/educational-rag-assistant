@@ -84,6 +84,7 @@ class PDFParser:
 
         if self.config.process_text:
             self.text_processor = TextProcessor(
+                image_folder=self.config.images_dir,
                 model_name=self.config.model_name,
                 output_folder=self.config.text_processor_output,
                 need_output_file=self.config.save_intermediate,

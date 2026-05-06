@@ -1,6 +1,8 @@
 import uuid
 import json
 import time
+from typing import Any
+
 import pymupdf
 from PIL import Image
 import io
@@ -28,7 +30,7 @@ class ChunkStoragePreparer:
         self.parent_chunks = [] # Изначальный список чанков
         self.id_map = {}
 
-        self.fields_to_remove = [
+        self._fields_to_remove = [
             "block_type",
             "content_label",
             "unresolved_refs",
@@ -41,8 +43,27 @@ class ChunkStoragePreparer:
             'need_save': self.need_output_file,
             'total_time': 0.0
         }
+        
+    @log.catch
+    def process(self, parent_chunks: list[dict[str, Any]], document_path: str | Path = '') -> list[dict[str, Any]]:
+        log.info(
+            f"Подготовка чанков к перемещению в бд для файла: {document_path.name}")
 
-    def new_document_stats(self, chunks, document_path: str | Path):
+        start_time = time.time()
+
+        self._new_document_stats(parent_chunks, document_path)
+        self._generate_id_mapping()
+        self._transform_hierarchy()
+
+        self._update_stats(time.time() - start_time)
+        self._save_final_document()
+
+        return self.chunks
+
+    def get_stats(self) -> dict:
+        return self.process_document_data
+
+    def _new_document_stats(self, chunks: list[dict[str, Any]], document_path: str | Path):
         """
         Инициализация статистики для нового документа.
         """
@@ -58,16 +79,16 @@ class ChunkStoragePreparer:
             'total_time': 0.0
         }
 
-    def get_stats(self):
-        return self.process_document_data
-
-    def update_stats(self, total_time: float):
+    def _update_stats(self, total_time: float):
         self.process_document_data["total_time"] = total_time
 
-    def save_final_document(self):
+    def _save_final_document(self):
         """
         Сохранения результата обработки документа.
         """
+        if not self.need_output_file:
+            return
+
         output_path = self.output_folder / self.process_document_data['result_document_path']
 
         with open(output_path, 'w', encoding='utf-8') as f:
@@ -75,27 +96,11 @@ class ChunkStoragePreparer:
 
         log.info(f"Результат обработки сохранен в {output_path}")
 
-    @log.catch
-    def process(self, parent_chunks: list, document_path: str | Path = ''):
-        log.info(
-            f"Подготовка чанков к перемещению в бд для файла: {document_path.name}")
-
-        start_time = time.time()
-
-        self.new_document_stats(parent_chunks, document_path)
-        self._generate_id_mapping()
-        self._transform_hierarchy()
-
-        self.update_stats(time.time() - start_time)
-        if self.need_output_file:
-            self.save_final_document()
-
-        return self.chunks
-
     def _generate_id_mapping(self):
         """
         Генерирует UUID для всех parent чанков и мини-чанков.
         """
+        log.info('Генерация уникальных UUID для всех чанков')
         for parent in tqdm(self.parent_chunks, 'Генерация уникальных id'):
             p_id = str(parent.get("id"))
             if p_id not in self.id_map:
@@ -111,6 +116,7 @@ class ChunkStoragePreparer:
         Вызывает детальную обработку для каждого чанка.
         """
 
+        log.info('Выполняется изменение структуры чанков')
         for parent_index, parent_group in enumerate(tqdm(self.parent_chunks, 'Изменение структуры чанков')):
             new_parent_id = self.id_map.get(str(parent_group.get("id")))
             parent_linked_ids = set(parent_group.get("linked_chunks", {}).keys())
@@ -126,7 +132,7 @@ class ChunkStoragePreparer:
 
         self.process_document_data["total_chunks"] = len(self.chunks)
 
-    def _prepare_mini_chunk(self, parent_index, chunk_index, new_parent_id: str, parent_linked_ids: set) -> dict:
+    def _prepare_mini_chunk(self, parent_index: int, chunk_index: int, new_parent_id: str, parent_linked_ids: set) -> dict:
         """
         Трансформация одного мини-чанка.
         """
@@ -153,10 +159,8 @@ class ChunkStoragePreparer:
         self._handle_links(new_chunk, parent_linked_ids)
 
         # Удаление лишних полей
-        for field in self.fields_to_remove:
+        for field in self._fields_to_remove:
             new_chunk.pop(field, None)
-
-        # Убираем старое поле parent_group
         new_chunk.pop("parent_group", None)
 
         return new_chunk
@@ -187,7 +191,7 @@ class ChunkStoragePreparer:
         chunk["internal_links"] = internal_links
         chunk.pop("linked_chunks", None)
 
-    def _extract_image(self, parent_index, chunk_index, dpi=150):
+    def _extract_image(self, parent_index: int, chunk_index: int, dpi: int = 150):
         with pymupdf.open(self.document_path) as document:
             zoom = dpi / 72
             mat = pymupdf.Matrix(zoom, zoom)
@@ -220,5 +224,5 @@ class ChunkStoragePreparer:
                 filepath = self.image_folder / filename
                 chunk['image_path'] = filepath
                 img.save(filepath, "PNG", optimize=True)
-            except Exception:
-                pass
+            except Exception as e:
+                log.error(f'Ошибка в обработке изображения: {e}')

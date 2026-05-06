@@ -121,6 +121,7 @@ def _build_loader_config(s: dict[str, Any], document_name: str | None) -> Storag
         storage_preparer_output=str(Paths.storage_out),
         save_intermediate=s["save_intermediate"],
         recreate_db=s["recreate_db"],
+        vector_size=s["vector_size"]
     )
 
 

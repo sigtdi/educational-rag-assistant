@@ -6,7 +6,7 @@ import subprocess
 import gc
 from tqdm import tqdm
 from pathlib import Path
-from typing import List, Literal
+from typing import List, Literal, Any
 from pydantic import BaseModel, Field
 from pylatexenc.latexwalker import LatexWalker
 from time import time
@@ -19,7 +19,7 @@ from langchain_core.runnables import RunnableLambda
 from app.logger_setup import log
 from app.services.document_processing.parser.utils import answer_fixer
 
-#TODO
+
 class ImageOutput(BaseModel):
     """
     Схема выходных данных от VLM
@@ -28,20 +28,6 @@ class ImageOutput(BaseModel):
         description="Содержательное описание изображения на русском языке (100-800) символов.",
         min_length=50,
         max_length=1200
-    )
-
-    image_type: Literal[
-        "граф",
-        "дерево",
-        "блок-схема",
-        "диаграмма",
-        "таблица",
-        "псевдокод",
-        "временная_сложность",
-        "иллюстрация",
-        "другое"
-    ] = Field(
-        description="Тип изображения из учебника по алгоритмам"
     )
 
     key_elements: List[str] = Field(
@@ -59,7 +45,6 @@ class ImageOutput(BaseModel):
                         "(C, D, 8), (C, E, 10), (D, E, 2), (E, F, 6). Граф иллюстрирует задачу поиска кратчайшего пути. "
                         "Вершина A выделена как стартовая, F как конечная."
                     ),
-                    "image_type": "граф",
                     "key_elements": [
                         "6 вершин (A, B, C, D, E, F)",
                         "8 взвешенных рёбер",
@@ -75,7 +60,6 @@ class ImageOutput(BaseModel):
                         "представлены кружками с числами внутри.Стрелки показывают связи родитель-потомок. "
                         "Дерево сбалансировано на глубину 4."
                     ),
-                    "image_type": "дерево",
                     "key_elements": [
                         "корень со значением 50",
                         "9 узлов всего",
@@ -91,7 +75,6 @@ class ImageOutput(BaseModel):
                         "символов: (q0, q1, a), (q1, q2, 'b'), (q2, q0, 'ε'). Любые другие символы ведут в q3. "
                         "Принимающее состояние q2 выделено двойным кружком. Стрелка входа указывает на q0."
                     ),
-                    "image_type": "граф",
                     "key_elements": [
                         "5 состояний (q0, q1, q2, q3)",
                         "переходы с метками символов",
@@ -103,14 +86,15 @@ class ImageOutput(BaseModel):
             ]
         }
 
+
 class ImageProcessor:
     def __init__(
             self,
-            image_folder:      str     = 'extracted_images',
-            model_name:        str     = 'qwen3-vl:8b-instruct',
-            output_folder:     str     = "output_image_processor",
-            need_output_file:  bool    = True,
-            delete_images:     bool    = False
+            image_folder:      str,
+            model_name:        str,
+            output_folder:     str,
+            need_output_file:  bool,
+            delete_images:     bool
     ):
         if need_output_file:
             self.output_folder = Path(__file__).resolve().parent.parent / 'output' / output_folder
@@ -122,12 +106,13 @@ class ImageProcessor:
         self._prompt = None
         self._chain = None
         self._model = None
+        self._parser = PydanticOutputParser(pydantic_object=ImageOutput)
+        self._max_retries = 3
 
         self.document_path = None
         self.current_document_name = None
         self.model_name = model_name
-        self.parser = PydanticOutputParser(pydantic_object=ImageOutput)
-        self.max_retries = 3
+        
         self.need_output_file = need_output_file
         self.need_delete_images = delete_images
 
@@ -142,11 +127,57 @@ class ImageProcessor:
             'failed_chunks': [], # Чанки, которым не удалось сгенерировать описание
             'result_document_name': '',
             'need_save': self.need_output_file,
-            'total_time': 0
+            'total_time': 0.0
         }
 
+    def process(self, chunks: list[dict[str, Any]], document_path: str | Path) -> list[dict[str, Any]]:
+        start_time = time()
+        log.info(f'Обработка изображений для документа {Path(document_path).name}')
+        self._new_document_stats(text=chunks, document_path=document_path)
+        self._initial_check()
+        self._extract_images()
+
+        log.info('Генерация описаний для чанков с изображениями')
+        for attempt in range(self._max_retries):
+            for index, context, chunk in tqdm(self._get_image_context, total=self.remaining_chunks,
+                                              desc='Генерация описаний'):
+                vlm_answer = self._description_generation_via_vlm(chunk['id'], chunk['text'], context, chunk['image_path'])
+                is_valid = self._validate_chunk(vlm_answer=vlm_answer['result'])
+
+                if not is_valid or vlm_answer['status'] == 'error':
+                    continue
+
+                self._insert_image_data(chunk_index=index, vlm_answer=vlm_answer['result'])
+
+            if all(self.chunk_index_mask):
+                log.info("Описания ко всем изображениям успешно сгенерированы.")
+                # Сохранение данных в файл и удаление изображений
+                self._save_final_document()
+                self._delete_images()
+
+                self._update_stats(total_time=time() - start_time)
+                self._clear_vlm_memory()
+                return self.text_chunks
+
+            else:
+                self.remaining_chunks = self.chunk_index_mask.count(0)
+                log.warning(
+                    f"Остались необработанные изображения. Еще повторных попыток {self._max_retries - attempt - 1}.")
+        else:
+            log.error("Достигнуто максимальное количество попыток, но не все изображения обработаны.")
+            # Сохранение данных в файл и удаление изображений
+            self._save_final_document()
+            self._delete_images()
+
+            self._update_stats(time() - start_time)
+            self._clear_vlm_memory()
+            return self.text_chunks
+        
+    def get_stats(self) -> dict:
+        return self.process_document_data
+
     @property
-    def get_image_context(self):
+    def _get_image_context(self):
         """
         Генератор для итерации по чанкам с изображениями.
         """
@@ -195,7 +226,7 @@ class ImageProcessor:
         LangChain цепочка: prompt | model | answer_fixer | parser
         """
         if self._chain is None:
-            self._chain = self.prompt | self.model | RunnableLambda(answer_fixer) | self.parser
+            self._chain = self.prompt | self.model | RunnableLambda(answer_fixer) | self._parser
         return self._chain
 
     @property
@@ -213,7 +244,7 @@ class ImageProcessor:
             )
         return self._model
 
-    def clear_vlm_memory(self):
+    def _clear_vlm_memory(self):
         """
         Выгружает модель из памяти
         """
@@ -226,7 +257,7 @@ class ImageProcessor:
 
         gc.collect()
 
-    def new_document_stats(self, text, document_path):
+    def _new_document_stats(self, text, document_path):
         """
         Установка данных для обработки нового документа.
         """
@@ -241,17 +272,10 @@ class ImageProcessor:
             'failed_chunks': [],
             'result_document_name': f"{Path(self.document_path).stem}_image_processed_json.txt",
             'need_save': self.need_output_file,
-            'total_time': 0
+            'total_time': 0.0
         }
 
-    def load_image_as_base64(self, image_path: str):
-        with open(image_path, 'rb') as file:
-            image_bytes = file.read()
-
-        return base64.b64encode(image_bytes).decode('utf-8')
-
-    @log.catch
-    def extract_images(self, dpi=150):
+    def _extract_images(self, dpi=150):
         """
         Получение изображений для чанков, содержащих блоки Picture или Figure.
         """
@@ -260,7 +284,8 @@ class ImageProcessor:
             zoom = dpi / 72
             mat = pymupdf.Matrix(zoom, zoom)
 
-            for index, context, chunk in tqdm(self.get_image_context, total=self.remaining_chunks,
+            log.info('Сбор изображений из документа')
+            for index, context, chunk in tqdm(self._get_image_context, total=self.remaining_chunks,
                                               desc='Получение изображений'):
                 page_num = int(chunk['page'])
                 page = document[page_num]
@@ -274,13 +299,16 @@ class ImageProcessor:
                     filepath = self.image_folder / filename
                     chunk['image_path'] = filepath
                     pix.save(filepath)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.error(f'Ошибка в обработке изображения: {e}')
 
-    def delete_images(self):
+    def _delete_images(self):
         """
         Удаляет все изображения, созданные для текущего документа.
         """
+        if not self.need_delete_images:
+            return
+        
         log.info('Удаление собранных изображений.')
         stem = Path(self.document_path).stem
         pattern = f"chunk*_{stem}_image.png"
@@ -299,45 +327,86 @@ class ImageProcessor:
 
         log.info(f"Очистка завершена. Удалено файлов: {len(files_to_delete)}")
 
-    def initial_check(self):
+    def _initial_check(self):
         """
         Поиск всех чанков с изображениями и заполнение маски.
         """
 
         for index, chunk in enumerate(tqdm(self.text_chunks, "Поиск чанков с изображениями")):
-            if chunk['block_type'] not in {'Picture', 'Figure', 'FigureGroup', 'PictureGroup'}:
+            if chunk['block_type'] not in {'Picture', 'Figure', 'Table', 'FigureGroup', 'PictureGroup', 'TableGroup'}:
                 self.chunk_index_mask[index] = 1
             else:
                 self.chunk_index_mask[index] = 0
 
         self.remaining_chunks = self.chunk_index_mask.count(0)
 
-    def description_generation_via_vlm(self, chunk_id, caption, context, image_path):
-        image_b64 = self.load_image_as_base64(image_path)
+    def _description_generation_via_vlm(self, chunk_id: int, caption: str, context: str, image_path: str | Path) -> dict:
+        image_b64 = self._load_image_as_base64(image_path)
 
-        for attempt in range(self.max_retries):
+        for attempt in range(self._max_retries):
             try:
                 result = self.chain.invoke({
                     'image_base64': image_b64,
                     'caption': caption,
                     'context': context,
-                    "format_instructions": self.parser.get_format_instructions()
+                    "format_instructions": self._parser.get_format_instructions()
                 })
 
                 return {'result': result, 'status': 'success'}
 
             except json.JSONDecodeError as e:
-                log.error(f"Некорректный ответ для чанка {chunk_id}. Осталось повторных попыток {self.max_retries - attempt - 1}")
-                if attempt == self.max_retries:
+                log.error(f"Некорректный ответ для чанка {chunk_id}. Осталось повторных попыток {self._max_retries - attempt - 1}")
+                if attempt == self._max_retries:
                     return {'result': None, 'status': 'error'}
 
             except Exception as e:
-                log.error(f"Ошибка обработки чанка {chunk_id}: {e}.\nОсталось повторных попыток {self.max_retries - attempt - 1}")
-                if attempt == self.max_retries:
+                log.error(f"Ошибка обработки чанка {chunk_id}: {e}.\nОсталось повторных попыток {self._max_retries - attempt - 1}")
+                if attempt == self._max_retries:
                     return {'result': None, 'status': 'error'}
         return {'result': None, 'status': 'error'}
 
-    def validate_chunk(self, vlm_answer):
+    def _insert_image_data(self, chunk_index: int, vlm_answer):
+        description = vlm_answer.description
+        key_elements = vlm_answer.key_elements
+
+        caption = self.text_chunks[chunk_index]['text'] \
+            if self.text_chunks[chunk_index]['text'].startswith(("Рис", 'Таблиц')) else ''
+
+        self.process_document_data['described_images'] += 1
+
+        kw_str = f". Ключевые слова: {', '.join(key_elements)}" if key_elements else ""
+        insert = f"![{caption}]({description}{kw_str})"
+        self.text_chunks[chunk_index]['text'] = insert
+        self.chunk_index_mask[chunk_index] = 1
+
+    def _update_stats(self, total_time: float):
+        self.process_document_data['failed_chunks'] = [self.text_chunks[i]['id'] for i, val in enumerate(self.chunk_index_mask) if val == 0]
+        self.process_document_data['failed_images_count'] = self.chunk_index_mask.count(0)
+        self.process_document_data['total_time'] = total_time
+
+    def _save_final_document(self):
+        """
+        Сохранения результата обработки документа.
+        """
+        if not self.need_output_file:
+            return
+        
+        output_path = self.output_folder / self.process_document_data['result_document_name']
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(self.text_chunks, f, ensure_ascii=False, indent=4, default=str)
+
+        log.info(f"Результат обработки сохранен в {output_path}")
+        
+    @staticmethod
+    def _load_image_as_base64(image_path: str):
+        with open(image_path, 'rb') as file:
+            image_bytes = file.read()
+
+        return base64.b64encode(image_bytes).decode('utf-8')
+
+    @staticmethod
+    def _validate_chunk(vlm_answer) -> bool:
         """
         Проверка сгенерированных описаний.
         """
@@ -357,80 +426,3 @@ class ImageProcessor:
                 is_valid *= False
 
         return is_valid
-
-    def insert_image_data(self, chunk_index, vlm_answer):
-        description = vlm_answer.description
-        key_elements = vlm_answer.key_elements
-        image_type = vlm_answer.image_type
-
-        self.process_document_data['described_images'] += 1
-
-        kw_str = f". Ключевые слова: {', '.join(key_elements)}" if key_elements else ""
-        insert = f"![{image_type}][{self.text_chunks[chunk_index]['text']}]({description}{kw_str})"
-        self.text_chunks[chunk_index]['text'] = insert
-        self.chunk_index_mask[chunk_index] = 1
-
-    def update_stats(self, total_time):
-        self.process_document_data['failed_chunks'] = [self.text_chunks[i]['id'] for i, val in enumerate(self.chunk_index_mask) if val == 0]
-        self.process_document_data['failed_images_count'] = self.chunk_index_mask.count(0)
-        self.process_document_data['total_time'] = total_time
-
-    def get_stats(self):
-        return self.process_document_data
-
-    def save_final_document(self):
-        """
-        Сохранения результата обработки документа.
-        """
-        output_path = self.output_folder / self.process_document_data['result_document_name']
-
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(self.text_chunks, f, ensure_ascii=False, indent=4, default=str)
-
-        log.info(f"Результат обработки сохранен в {output_path}")
-
-    def process(self, chunks, document_path):
-        start_time = time()
-        log.info(f'Обработка изображений для документа {Path(document_path).name}')
-        self.new_document_stats(text=chunks, document_path=document_path)
-        self.initial_check()
-        self.extract_images()
-
-        for attempt in range(self.max_retries):
-            for index, context, chunk in tqdm(self.get_image_context, total=self.remaining_chunks,
-                                              desc='Генерация описаний'):
-                vlm_answer = self.description_generation_via_vlm(chunk['id'], chunk['text'], context, chunk['image_path'])
-                is_valid = self.validate_chunk(vlm_answer=vlm_answer['result'])
-
-                if not is_valid or vlm_answer['status'] == 'error':
-                    continue
-
-                self.insert_image_data(chunk_index=index, vlm_answer=vlm_answer['result'])
-
-            if all(self.chunk_index_mask):
-                log.info("Описания ко всем изображениям успешно сгенерированы.")
-                # Сохранение данных в файл и удаление изображений
-                if self.need_output_file:
-                    self.save_final_document()
-                if self.need_delete_images:
-                    self.delete_images()
-
-                self.update_stats(total_time=time() - start_time)
-                self.clear_vlm_memory()
-                return self.text_chunks
-
-            else:
-                self.remaining_chunks = self.chunk_index_mask.count(0)
-                log.warning(
-                    f"Остались необработанные изображения. Еще повторных попыток {self.max_retries - attempt - 1}.")
-        else:
-            log.error("Достигнуто максимальное количество попыток, но не все изображения обработаны.")
-            # Сохранение данных в файл и удаление изображений
-            if self.need_output_file:
-                self.save_final_document()
-            if self.need_delete_images:
-                self.delete_images()
-
-            self.update_stats(time() - start_time)
-            self.clear_vlm_memory()
-            return self.text_chunks

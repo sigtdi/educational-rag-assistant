@@ -2,6 +2,8 @@ import re
 import json
 from time import time
 from pathlib import Path
+from typing import Any
+
 from tqdm import tqdm
 
 from app.services.document_processing.chunking.chunker_config import ChunkerConfig
@@ -18,35 +20,35 @@ class ChunkProcessor:
         self.document_path = None
         self.chunks = []
         self.parent_chunks = []
-        self.anchor_dict: dict[str, list[str]] = {}
+        self.anchor_dict = {}
 
-        self.max_continuation_chunks = 6
-        self.max_len_parent_chunk = 10
+        self._max_continuation_chunks = 6
+        self._max_len_parent_chunk = 10
 
         # Метки
-        self.label_pattern = re.compile(
+        self._label_pattern = re.compile(
             r'^(определение|теорема|лемма|аксиома|следствие|утверждение|'
-            r'замечание|пример|алгоритм|задача|свойство|доказательство)'
+            r'замечание|пример|алгоритм|задача|свойство|доказательство|таблица)'
             r'[\s\xa0]+(\d+(?:\.\d+)*)[\.\:\s]?',
             re.IGNORECASE
         )
         # Метки для рисунков
-        self.figure_pattern = re.compile(
+        self._figure_pattern = re.compile(
             r'рис(?:унок)?\.?\s*(\d+(?:\.\d+)*)',
             re.IGNORECASE
         )
         # Сигнальные слова, после которых продолжение отслеживания метки прекращается
-        self.stop_words = re.compile(
+        self._stop_words = re.compile(
             r'^(доказательство|заметим|покажем|таким образом|следовательно|'
-            r'отсюда|действительно|вернёмся|перейдём|рассмотрим|покажем|во многих|многие)',
+            r'отсюда|действительно|вернёмся|перейдём|рассмотрим|во многих|многие)',
             re.IGNORECASE
         )
 
         # Ссылки на метки из других чанков
-        self.ref_pattern = re.compile(
+        self._ref_pattern = re.compile(
             r'\b(определени[иею]|теорем[еаы]|лемм[еаы]|аксиом[еаы]|следстви[иею]|'
             r'утвержден[ии]|замечани[иею]|примере?|алгоритм[еа]|задач[еи]|свойств[еа]|'
-            r'доказательств[еа]|рис(?:унк[еа])?\.?)'
+            r'доказательств[еа]|таблиц[еуа]|рис(?:унк[еаи])?\.?)'
             r'[\s\xa0]+(\d+(?:\.\d+)*)',
             re.IGNORECASE
         )
@@ -58,10 +60,30 @@ class ChunkProcessor:
             'unresolved_refs': 0,  # Количество ссылок на неопределенную метку
             'result_document_name': '',
             'saved': self.config.save_intermediate,
-            'total_time': 0
+            'total_time': 0.0
         }
+        
+    @log.catch
+    def run(self, chunks: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+        start_time = time()
+        log.info(f'Обработка чанков для документа {Path(self.config.document_name).name}')
 
-    def load_chunks(self):
+        self._new_document_stats(document_name = self.config.document_name, chunks=chunks)
+        self._assign_section_headers()
+        self._detect_content_labels()
+        self._collect_references()
+        self._build_parent_chunks()
+
+        self._update_stats(time() - start_time)
+
+        self._save_final_document()
+
+        return self.parent_chunks
+    
+    def get_stats(self) -> dict[str, Any]:
+        return self.process_document_data
+
+    def _load_chunks(self):
         # Определяем путь, учитывая суффикс
         suffix = self.config.suffix if (self.config.has_suffix and self.config.document_name) else ''
         file_path = self.config.input_dir / (str(Path(self.config.document_name).stem) + suffix)
@@ -75,11 +97,11 @@ class ChunkProcessor:
         except json.JSONDecodeError:
             log.error(f"Ошибка: некорректный JSON в файле {file_path}")
 
-    def new_document_stats(self, document_name, chunks = None):
+    def _new_document_stats(self, document_name: str | Path, chunks: list[dict[str, Any]] = None):
         if chunks:
             self.chunks = chunks
         else:
-            self.load_chunks()
+            self._load_chunks()
 
         self.process_document_data = {
             'total_chunks': len(self.chunks),  # Общее количество начальных мини-чанков
@@ -91,13 +113,10 @@ class ChunkProcessor:
             'total_time': 0
         }
 
-    def update_stats(self, total_time):
+    def _update_stats(self, total_time: float):
         self.process_document_data['total_time'] = total_time
 
-    def get_stats(self):
-        return self.process_document_data
-
-    def save_final_document(self):
+    def _save_final_document(self):
         """
         Сохранения результата обработки документа.
         """
@@ -111,7 +130,7 @@ class ChunkProcessor:
 
         log.info(f"Результат обработки сохранен в {output_path}")
 
-    def assign_section_headers(self):
+    def _assign_section_headers(self):
         """
         Создает для каждого чанка section_path - список глав и подглав, в которых чанк находится.
         Меняет ошибочно типированные SectionHeader чанки на Text.
@@ -119,6 +138,7 @@ class ChunkProcessor:
         section_header_pattern = re.compile(r'^\d+(\.\d+)*\.?\s+\S')
         section_stack: list[tuple[tuple[int, ...], str]] = []
 
+        log.info(f'Выполняется определение секции чанка')
         for chunk in tqdm(self.chunks, 'Определение секции чанка'):
             # Не-заголовочному чанку добавляем названия глав и подглав, в которых он находится
             if chunk["block_type"] != "SectionHeader":
@@ -146,21 +166,16 @@ class ChunkProcessor:
 
             chunk["section_path"] = self._build_section_path(section_stack)
 
-    def _build_section_path(self, stack: list[tuple[tuple[int, ...], str]]) -> str | None:
-        """
-        Собирает section_path из текущего стека заголовков.
-        """
-        if not stack:
-            return ''
-        return " > ".join(header_text for _, header_text in stack)
+        log.info('Секции чанков определены')
 
-    def detect_content_labels(self):
+    def _detect_content_labels(self):
         """
         Определяет лейбл чанка: содержит ли чанк внутри себя определение/теорему/лемму и тд.
         """
         current_label = None
         continuation_count = 0
 
+        log.info('Выполняется поиск меток внутри чанков (определения, теоремы, рисунки и т. д.')
         for chunk in tqdm(self.chunks, 'Определение меток чанков'):
             block_type = chunk["block_type"]
             text = chunk.get("text", "").strip()
@@ -169,7 +184,7 @@ class ChunkProcessor:
 
             # Ищем рисунки
             if block_type in {"PictureGroup", "FigureGroup"}:
-                fig_match = self.figure_pattern.search(text)
+                fig_match = self._figure_pattern.search(text)
                 if fig_match:
                     label = f"Рисунок {fig_match.group(1)}"
                     chunk["content_label"] = label
@@ -187,7 +202,7 @@ class ChunkProcessor:
                 continuation_count = 0
                 continue
 
-            label_match = self.label_pattern.match(text)
+            label_match = self._label_pattern.match(text)
 
             if label_match:
                 kind = self._normalize_kind(label_match.group(1))
@@ -214,26 +229,24 @@ class ChunkProcessor:
                     current_label = None
                     continuation_count = 0
 
+        log.info('Поиск меток внутри чанков выполнен')
+
     def _is_continuation(self, text: str, continuation_count: int) -> bool:
         """
         Возвращает True, если чанк считается продолжением предыдущей метки.
         """
-        if continuation_count >= self.max_continuation_chunks:
+        if continuation_count >= self._max_continuation_chunks:
             return False
-        if self.stop_words.match(text):
+        if self._stop_words.match(text):
             return False
         return True
 
-    def _normalize_kind(self, raw: str) -> str:
-        """
-        Приводит тип к единому виду с заглавной буквы.
-        """
-        return raw.strip().capitalize()
-
-    def collect_references(self):
+    def _collect_references(self):
         """
         Собирает внутренние ссылки на метки в других чанках.
         """
+
+        log.info('Выполняется поиск ссылок на содержимое других чанков')
         for chunk in tqdm(self.chunks, 'Собор ссылок на другие чанки'):
             text = chunk.get("text", "")
             self_label = chunk.get("content_label")
@@ -241,7 +254,7 @@ class ChunkProcessor:
             linked = {}
             unresolved = []
 
-            for match in self.ref_pattern.finditer(text):
+            for match in self._ref_pattern.finditer(text):
                 kind_raw = match.group(1)
                 number = match.group(2)
                 label = f"{self._normalize_kind_from_ref(kind_raw)} {number}"
@@ -260,36 +273,9 @@ class ChunkProcessor:
             chunk["linked_chunks"] = linked
             chunk["unresolved_refs"] = unresolved
 
-    def _normalize_kind_from_ref(self, raw: str) -> str:
-        """
-        Приводит словоформу из ссылки к нормализованному виду.
-        """
-        raw = raw.strip().rstrip('.').lower()
+        log.info('Поиск ссылок на содержимое других чанков завершен')
 
-        normalization_map = {
-            'определени': 'Определение',
-            'теорем': 'Теорема',
-            'лемм': 'Лемма',
-            'аксиом': 'Аксиома',
-            'следстви': 'Следствие',
-            'утвержден': 'Утверждение',
-            'замечани': 'Замечание',
-            'пример': 'Пример',
-            'алгоритм': 'Алгоритм',
-            'задач': 'Задача',
-            'свойств': 'Свойство',
-            'доказательств': 'Доказательство',
-            'рис': 'Рисунок',
-            'рисунк': 'Рисунок',
-        }
-
-        for prefix, normalized in normalization_map.items():
-            if raw.startswith(prefix):
-                return normalized
-
-        return raw.capitalize()
-
-    def build_parent_chunks(self):
+    def _build_parent_chunks(self):
         """
         Собирает мини-чанки в группы.
         """
@@ -364,12 +350,13 @@ class ChunkProcessor:
             if not buffer:
                 return
 
-            if current_group and (len(current_group) + len(buffer) > self.max_len_parent_chunk):
+            if current_group and (len(current_group) + len(buffer) > self._max_len_parent_chunk ):
                 flush_group()
 
             current_group.extend(buffer)
             buffer = []
 
+        log.info('Выполняется объединение чанков в группы, учитывая смысловое содержимое')
         for chunk in tqdm(self.chunks, 'Объединение чанков в группы'):
             if chunk['block_type'] == 'SectionHeader':
                 continue
@@ -400,26 +387,57 @@ class ChunkProcessor:
                     buffer.append(chunk)
                     current_buffer_label = chunk_label
 
-            if len(current_group) >= self.max_len_parent_chunk:
+            if len(current_group) >= self._max_len_parent_chunk :
                 flush_group()
 
         move_buffer_to_group()
         flush_group()
+        log.info('Все чанки объединены в группы')
         self.process_document_data['total_parent_chunks'] = len(self.parent_chunks)
 
-    @log.catch
-    def run(self, chunks: list | None = None):
-        start_time = time()
-        log.info(f'Обработка чанков для документа {Path(self.config.document_name).name}')
+    @staticmethod
+    def _build_section_path(stack: list[tuple[tuple[int, ...], str]]) -> str | None:
+        """
+        Собирает section_path из текущего стека заголовков.
+        """
+        if not stack:
+            return ''
+        return " > ".join(header_text for _, header_text in stack)
 
-        self.new_document_stats(document_name = self.config.document_name, chunks=chunks)
-        self.assign_section_headers()
-        self.detect_content_labels()
-        self.collect_references()
-        self.build_parent_chunks()
+    @staticmethod
+    def _normalize_kind(raw: str) -> str:
+        """
+        Приводит тип к единому виду с заглавной буквы.
+        """
+        return raw.strip().capitalize()
 
-        self.update_stats(time() - start_time)
+    @staticmethod
+    def _normalize_kind_from_ref(raw: str) -> str:
+        """
+        Приводит словоформу из ссылки к нормализованному виду.
+        """
+        raw = raw.strip().rstrip('.').lower()
 
-        self.save_final_document()
+        normalization_map = {
+            'определени': 'Определение',
+            'теорем': 'Теорема',
+            'лемм': 'Лемма',
+            'аксиом': 'Аксиома',
+            'следстви': 'Следствие',
+            'утвержден': 'Утверждение',
+            'замечани': 'Замечание',
+            'пример': 'Пример',
+            'алгоритм': 'Алгоритм',
+            'задач': 'Задача',
+            'свойств': 'Свойство',
+            'доказательств': 'Доказательство',
+            'рис': 'Рисунок',
+            'рисунк': 'Рисунок',
+            'таблиц': 'Таблица'
+        }
 
-        return self.parent_chunks
+        for prefix, normalized in normalization_map.items():
+            if raw.startswith(prefix):
+                return normalized
+
+        return raw.capitalize()
