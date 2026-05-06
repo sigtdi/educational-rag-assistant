@@ -1,5 +1,5 @@
 import re
-import json
+from pylatexenc.latexencode import unicode_to_latex
 from app.logger_setup import log
 
 def answer_fixer(ai_message):
@@ -10,26 +10,39 @@ def answer_fixer(ai_message):
 
     try:
         if p_type == 'text_processor':
-            text = latex_fixer(json_content['text'])
+            text = fix_unicode_in_latex(json_content['text'])
+            text = latex_fixer(text)
             text = backslash_fixer(text)
             text = wrap_latex(text)
             json_content['text'] = text
 
         elif p_type == 'image_processor':
-            text = latex_fixer(json_content["description"])
+            text = fix_unicode_in_latex(json_content["description"])
+            text = latex_fixer(text)
             text = backslash_fixer(text)
             text = wrap_latex(text)
             json_content["description"] = text
 
             elems = []
             for elem in json_content['key_elements']:
-                text = latex_fixer(elem)
+                text = fix_unicode_in_latex(elem)
+                text = latex_fixer(text)
                 text = backslash_fixer(text)
                 text = wrap_latex(text)
                 elems.append(text)
             json_content['key_elements'] = elems
 
-        return json.dumps(json_content)
+        # Превращаем словарь в строку
+        parts = []
+        for key, value in json_content.items():
+            if isinstance(value, list):
+                items = ', '.join(f'"{v}"' for v in value)
+                parts.append(f'"{key}": [{items}]')
+            else:
+                parts.append(f'"{key}": "{value}"')
+
+        answer = '{' + ', '.join(parts) + '}'
+        return answer
 
     except Exception as e:
         log.error(f"Критическая ошибка парсинга: {e}")
@@ -49,17 +62,15 @@ def get_content_from_ai_message(ai_message):
     # Обработка ответа генератора описаний image_processor
     if "description" in json_body and "image_type" in json_body and "key_elements" in json_body:
         desc_match = re.search(r'"description"\s*:\s*"(.*?)"\s*,\s*"image_type"', json_body, re.DOTALL)
-        type_match = re.search(r'"image_type"\s*:\s*"(.*?)"', json_body, re.DOTALL)
         elements_match = re.search(r'"key_elements"\s*:\s*\[(.*?)\]', json_body, re.DOTALL)
 
         description = desc_match.group(1) if desc_match else ""
-        image_type = type_match.group(1) if type_match else ""
         elements = []
         if elements_match:
             raw_elements = elements_match.group(1)
             elements = [e.strip().strip('"').strip("'") for e in raw_elements.split(',') if e.strip()]
 
-        return { "description": description, "image_type": image_type, "key_elements": elements }, 'image_processor'
+        return { "description": description, "key_elements": elements }, 'image_processor'
 
     # Обработка ответа текстового редактора text_processor
     elif "text" in json_body:
@@ -84,8 +95,8 @@ def backslash_fixer(text):
         slashes = match.group(1)  # Сами слеши
         tail = match.group(2)  # Текст после слешей
 
-        # Если это два слеша и после них пробел, то делаем четыре
-        if slashes == r'\\' and tail.isspace():
+        # Если это два слеша и после них пробел или цифра, то делаем четыре
+        if slashes == r'\\' and (tail.isspace() or tail.isdigit()):
             return r'\\\\' + tail
 
         # Если это два слеша и после них не кавычка и не \n, то оставляем два слеша, иначе заменяем на 1 для проверки на latex
@@ -267,3 +278,28 @@ def wrap_latex(text):
     final_output = re.sub(r'\$\s+\$', ' ', final_output)
 
     return final_output
+
+# Символы, которые нужно заменять (математические Unicode)
+MATH_UNICODE_RANGES = [
+    range(0x2200, 0x2300),  # Mathematical Operators (∑ ∫ ∏ ≤ ≥ ≠ ∞ ...)
+    range(0x0370, 0x0400),  # Греческий алфавит (α β γ ...)
+    range(0x2100, 0x2150),  # Letterlike Symbols (ℝ ℕ ℤ ...)
+    range(0x27C0, 0x27F0),  # Miscellaneous Mathematical Symbols
+    range(0x2980, 0x2A00),  # Supplemental Mathematical Operators
+]
+
+def is_math_unicode(char: str) -> bool:
+    cp = ord(char)
+    return any(cp in r for r in MATH_UNICODE_RANGES)
+
+def fix_unicode_in_latex(text: str) -> str:
+    result = []
+    for char in text:
+        if is_math_unicode(char):
+            replaced = unicode_to_latex(char, unknown_char_policy='keep')
+            result.append(replaced)
+        else:
+            result.append(char)
+
+    res = ''.join(result).replace('\ensuremath', '')
+    return res
