@@ -30,6 +30,8 @@ class ChunkStoragePreparer:
         self.parent_chunks = [] # Изначальный список чанков
         self.id_map = {}
 
+        self._n_chars = 200 # Размер перекрытия чанков в символах
+
         self._fields_to_remove = [
             "block_type",
             "content_label",
@@ -141,13 +143,29 @@ class ChunkStoragePreparer:
         if chunk.get("block_type") in ["PictureGroup", "FigureGroup"]:
             self._extract_image(parent_index=parent_index, chunk_index=chunk_index)
 
+        # Добавляем перекрытие
+        prev_overlap = ""
+        if chunk_index > 0:
+            prev_text = self.parent_chunks[parent_index]['chunks'][chunk_index - 1].get("text", "")
+            tail = prev_text[-self._n_chars:]
+            space_idx = tail.find(" ")
+            prev_overlap = tail[space_idx + 1:] if space_idx != -1 else tail
+
+        next_overlap = ""
+        if chunk_index < len(self.parent_chunks[parent_index]['chunks']) - 1:
+            next_text = self.parent_chunks[parent_index]['chunks'][chunk_index + 1].get("text", "")
+            head = next_text[:self._n_chars]
+            space_idx = head.rfind(" ")
+            next_overlap = head[:space_idx] if space_idx != -1 else head
+
         new_chunk = chunk.copy()
 
         # Установка новых полей
         new_chunk["file_name"] = self.document_path.name
         section = new_chunk.get("section_path", "")
         text = new_chunk.get("text", "")
-        new_chunk["search_text"] = f"Глава: {section}. {text}".strip()
+        search_parts = filter(None, [prev_overlap, text, next_overlap])
+        new_chunk["search_text"] = f"Глава: {section}. {' '.join(search_parts)}".strip()
         new_chunk["type"] = 'picture' if chunk.get("block_type") in ["PictureGroup", "FigureGroup"] else 'text'
 
         # Замена id

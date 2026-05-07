@@ -62,7 +62,7 @@ class StorageLoader:
         self._init_chunks(Path(document_path).stem, parent_chunks)
 
         chunks = self._preparer.process(parent_chunks=self._parent_chunks, document_path=orig_doc_path)
-        self._loader.load(chunks=chunks, recreate=self.config.recreate_db)
+        self._loader.load(chunks=chunks)
 
         self.stats.end_time = datetime.now().isoformat()
         self.stats.total_duration_seconds = time() - start_time
@@ -97,7 +97,8 @@ class StorageLoader:
             dense_vector_name=self.config.dense_vector_name,
             sparse_vector_name=self.config.sparse_vector_name,
             batch_size=self.config.batch_size,
-            vector_size=self.config.vector_size
+            vector_size=self.config.vector_size,
+            recreate=self.config.recreate_db
         )
 
         log.info("Классы подготовки и загрузки данных инициализированы")

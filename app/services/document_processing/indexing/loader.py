@@ -21,7 +21,8 @@ class QdrantLoader:
         dense_vector_name: str,
         sparse_vector_name: str,
         batch_size: int,
-        vector_size: int
+        vector_size: int,
+        recreate: bool
     ):
         self.collection_name = collection_name
         self.batch_size = batch_size
@@ -39,13 +40,14 @@ class QdrantLoader:
 
         self.total_time = 0
 
+        self._ensure_collection(vector_size=self.vector_size, recreate=recreate)
+
     @log.catch
-    def load(self, chunks: list[dict[str, Any]], recreate: bool) -> None:
+    def load(self, chunks: list[dict[str, Any]]) -> None:
         """
         Векторизует и загружает чанки в Qdrant.
         """
         start_time = time()
-        self._ensure_collection(vector_size=self.vector_size, recreate=recreate)
 
         vector_store = QdrantVectorStore(
             client=self._client,
