@@ -130,6 +130,7 @@ class ImageProcessor:
             'total_time': 0.0
         }
 
+    @log.catch
     def process(self, chunks: list[dict[str, Any]], document_path: str | Path) -> list[dict[str, Any]]:
         start_time = time()
         log.info(f'Обработка изображений для документа {Path(document_path).name}')

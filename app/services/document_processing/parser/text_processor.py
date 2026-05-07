@@ -72,8 +72,8 @@ class TextProcessor:
         self._prompt = None
         self._chain = None
         self._model = None
-        self._gap_threshold = 0.20 # Доля пустого пространства, после которого обрезается изображение
-        self._max_retries = 3
+        self._gap_threshold = 0.12 # Доля пустого пространства, после которого обрезается изображение
+        self._max_retries = 2
 
         self.document_path = None
         self.model_name = model_name

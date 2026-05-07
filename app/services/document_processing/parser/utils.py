@@ -60,8 +60,8 @@ def get_content_from_ai_message(ai_message):
     json_body = json_content[start_bracket:end_bracket + 1]
 
     # Обработка ответа генератора описаний image_processor
-    if "description" in json_body and "image_type" in json_body and "key_elements" in json_body:
-        desc_match = re.search(r'"description"\s*:\s*"(.*?)"\s*,\s*"image_type"', json_body, re.DOTALL)
+    if "description" in json_body and "key_elements" in json_body:
+        desc_match = re.search(r'"description"\s*:\s*"(.*?)"\s*,\s*"key_elements"', json_body, re.DOTALL)
         elements_match = re.search(r'"key_elements"\s*:\s*\[(.*?)\]', json_body, re.DOTALL)
 
         description = desc_match.group(1) if desc_match else ""
@@ -115,7 +115,7 @@ def backslash_fixer(text):
 
         return slashes + tail
 
-    # Ищем последовательности из 1 или 2 слешей и один любой символ после них
+    # Ищем последовательности из 1 или 2 слешей и символы после них
     fixed_text = re.sub(r'(\\{1,2})(\w+|.)', transform, text, flags=re.DOTALL)
 
     return fixed_text
@@ -301,5 +301,5 @@ def fix_unicode_in_latex(text: str) -> str:
         else:
             result.append(char)
 
-    res = ''.join(result).replace('\ensuremath', '')
+    res = ''.join(result).replace('\\ensuremath', '')
     return res
