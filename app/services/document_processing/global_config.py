@@ -96,6 +96,7 @@ def _build_chunker_config(s: dict[str, Any], document_name: str | None) -> Chunk
         save_intermediate=s["save_intermediate"],
         has_suffix=True,
         suffix="_image_processed_json.txt",
+        model_name=s['model_name'],
         input_dir=Paths.image_out,
         output_dir=Paths.chunk_out,
     )

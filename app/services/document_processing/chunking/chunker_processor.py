@@ -3,11 +3,29 @@ import json
 from time import time
 from pathlib import Path
 from typing import Any
-
 from tqdm import tqdm
+from pydantic import BaseModel, Field
+import subprocess
+import gc
+
+from langchain_ollama import ChatOllama
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.runnables import RunnableLambda
 
 from app.services.document_processing.chunking.chunker_config import ChunkerConfig
+from app.services.document_processing.parser.utils import answer_fixer
 from app.logger_setup import log
+
+
+class MergeDecision(BaseModel):
+    should_merge: bool = Field(description="Нужно ли объединить текущий чанк со следующим")
+
+
+class SemanticDescription(BaseModel):
+    meaning: str = Field(description="Краткое описание сути чанка (например: 'Определение B-дерева', 'Псевдокод балансировки')")
+    category: str = Field(description="Категория: определение, теорема, алгоритм, пример, текст")
+
 
 class ChunkProcessor:
     def __init__(self, config: ChunkerConfig):
@@ -24,6 +42,15 @@ class ChunkProcessor:
 
         self._max_continuation_chunks = 6
         self._max_len_parent_chunk = 10
+        self._skip_type = {'Picture', 'Figure', 'Table', 'FigureGroup', 'PictureGroup', 'TableGroup'}
+        self._model = None
+        self._merge_chain = None
+        self._semantic_chain = None
+        self._merge_prompt = None
+        self._semantic_prompt = None
+
+        self.merge_parser = PydanticOutputParser(pydantic_object=MergeDecision)
+        self.semantic_parser = PydanticOutputParser(pydantic_object=SemanticDescription)
 
         # Метки
         self._label_pattern = re.compile(
@@ -70,18 +97,170 @@ class ChunkProcessor:
 
         self._new_document_stats(document_name = self.config.document_name, chunks=chunks)
         self._assign_section_headers()
+        self._merge_chunks_logic()
         self._detect_content_labels()
         self._collect_references()
+        self._apply_semantic_tags()
         self._build_parent_chunks()
+
+        self._clear_vlm_memory()
 
         self._update_stats(time() - start_time)
 
         self._save_final_document()
 
         return self.parent_chunks
+
+    @property
+    def merge_prompt(self) -> ChatPromptTemplate:
+        """
+        Шаблон промпта для исправления формул.
+        """
+        if self._merge_prompt is None:
+            self._merge_prompt = ChatPromptTemplate([
+                ("system", (
+                    "Ты — интеллектуальный агент по подготовке данных."
+                    "\nТвоя задача: определить, нужно ли объединить два соседних фрагмента текста (Чанк 1 и Чанк 2) из "
+                    "учебника по алгоритмам в один."
+                    "\nОтвечай True (нужно объединить), если выполняется хотя бы одно условие:"
+                    "\n1. Чанк 1 заканчивается двоеточием, запятой, союзом или на середине предложения без точки."
+                    "\n2. Чанк 1 содержит только короткое вводное слово или заголовок (например: 'Вход:', 'Выход:', "
+                    "'Обозначения:', 'Дано:', 'Шаг 1:', 'Пример:')."
+                    "\n3. Чанк 2 продолжает нумерованный список, формулу или блок псевдокода (например, разрыв между "
+                    "`begin` и `end` или `for` и телом цикла), начатые в первом чанке."
+                    "\n4. Один из чанков слишком мал и не несет самостоятельного смысла без соседнего."
+                    "\nОтвечай 'НЕТ' (не объединять), если оба чанка — это самостоятельные, законченные по смыслу "
+                    "абзацы, или Чанк 2 начинается с новой мысли."
+                    "\n{format_instructions}."
+                )),
+                ("human", "Чанк 1: {chunk_a}\n\nЧанк 2: {chunk_b}")
+            ])
+        return self._merge_prompt
+
+    @property
+    def semantic_prompt(self) -> ChatPromptTemplate:
+        """
+        Шаблон промпта для исправления формул.
+        """
+        if self._semantic_prompt is None:
+            self._semantic_prompt = ChatPromptTemplate([
+                ("system", (
+                    "Изучи текущий фрагмент текста и окружающий контекст. Напиши очень кратко (одним выражением), что "
+                    "именно содержится в текущем фрагменте. "
+                    "\nПримеры: 'определение неориентированного графа', 'псевдокод сортировки пузырьком', "
+                    "'доказательство мастер-теоремы', 'описание свойств алгоритма'."
+                    "\nКонтекст до: {prev_chunk}"
+                    "\nТекущий фрагмент: {current_chunk}"
+                    "\nКонтекст после: {next_chunk}"
+                    "\n{format_instructions}."
+                ))
+            ])
+        return self._semantic_prompt
+
+    @property
+    def semantic_chain(self):
+        """
+        LangChain цепочка: prompt | model | parser
+        """
+        if self._semantic_chain is None:
+            self._semantic_chain = self.semantic_prompt | self.model | RunnableLambda(answer_fixer) | self.semantic_parser
+        return self._semantic_chain
+
+    @property
+    def merge_chain(self):
+        """
+        LangChain цепочка: prompt | model | parser
+        """
+        if self._merge_chain is None:
+            self._merge_chain = self.merge_prompt | self.model | self.merge_parser
+        return self._merge_chain
+
+    @property
+    def model(self) -> ChatOllama:
+        """
+        Модель Ollama.
+        """
+        if self._model is None:
+            self._model = ChatOllama(
+                model=self.config.model_name,
+                temperature=0,
+                keep_alive="60m",
+                num_predict=10000,
+                repeat_penalty=1.5,
+                reasoning=False
+            )
+        return self._model
     
     def get_stats(self) -> dict[str, Any]:
         return self.process_document_data
+
+    def _merge_chunks_logic(self):
+        """
+        Склеивание разбитых чанков.
+        """
+        if not self.chunks:
+            return
+
+        merged = []
+        current_chunk = self.chunks[0]
+
+        log.info('Выполняется склеивание разбитых чанков с помощью llm')
+        for i in tqdm(range(1, len(self.chunks)), 'Склеивание чанков'):
+            next_chunk = self.chunks[i]
+
+            # Пропускаем объединение для таблиц и рисунков
+            if current_chunk.get('block_type') in self._skip_type or \
+                    next_chunk.get('block_type') in self._skip_type:
+                merged.append(current_chunk)
+                current_chunk = next_chunk
+                continue
+
+            try:
+                res = self.merge_chain.invoke({
+                    "chunk_a": current_chunk['text'],
+                    "chunk_b": next_chunk['text'],
+                    "format_instructions": self.merge_parser.get_format_instructions()
+                })
+
+                if res.should_merge:
+                    current_chunk['text'] += " " + next_chunk['text']
+                else:
+                    merged.append(current_chunk)
+                    current_chunk = next_chunk
+            except Exception as e:
+                log.error(f"Ошибка при обработке слияния чанков: {e}")
+                merged.append(current_chunk)
+                current_chunk = next_chunk
+
+        merged.append(current_chunk)
+        self.chunks = merged
+
+    def _apply_semantic_tags(self):
+        """
+        Определение смысла каждого чанка.
+        """
+
+        log.info('Дополнение чанков семантическими тегами')
+        for i in tqdm(range(len(self.chunks)), desc="Semantic tagging"):
+            if self.chunks[i]['block_type'] in self._skip_type:
+                continue
+
+            try:
+                prev_chunk = self.chunks[i - 1]['text'] if i > 0 else "[НАЧАЛО ДОКУМЕНТА]"
+                target_chunk = self.chunks[i]['text']
+                next_chunk = self.chunks[i + 1]['text'] if i < len(self.chunks) - 1 else "[КОНЕЦ ДОКУМЕНТА]"
+
+                res = self.semantic_chain.invoke({
+                    "prev_chunk": prev_chunk,
+                    "current_chunk": target_chunk,
+                    "next_chunk": next_chunk,
+                    "format_instructions": self.semantic_parser.get_format_instructions()
+                })
+
+                self.chunks[i]['semantic_tag'] = '[' + res.category + '. ' + res.meaning + ']'
+
+            except Exception as e:
+                log.error(f"Ошибка при определени семантического тега: {e}")
 
     def _load_chunks(self):
         # Определяем путь, учитывая суффикс
@@ -394,6 +573,19 @@ class ChunkProcessor:
         flush_group()
         log.info('Все чанки объединены в группы')
         self.process_document_data['total_parent_chunks'] = len(self.parent_chunks)
+
+    def _clear_vlm_memory(self):
+        """
+        Выгружает модель из памяти
+        """
+
+        if hasattr(self, "_model") and self._model is not None:
+            del self._model
+            self._model = None
+
+        subprocess.run(["ollama", "stop", self.config.model_name], check=False)
+
+        gc.collect()
 
     @staticmethod
     def _build_section_path(stack: list[tuple[tuple[int, ...], str]]) -> str | None:

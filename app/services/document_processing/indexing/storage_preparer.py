@@ -30,7 +30,7 @@ class ChunkStoragePreparer:
         self.parent_chunks = [] # Изначальный список чанков
         self.id_map = {}
 
-        self._n_chars = 200 # Размер перекрытия чанков в символах
+        self._n_chars = 100 # Размер перекрытия чанков в символах
 
         self._fields_to_remove = [
             "block_type",
@@ -163,9 +163,10 @@ class ChunkStoragePreparer:
         # Установка новых полей
         new_chunk["file_name"] = self.document_path.name
         section = new_chunk.get("section_path", "")
+        semantic_tag = new_chunk.get("semantic_tag", "")
         text = new_chunk.get("text", "")
         search_parts = filter(None, [prev_overlap, text, next_overlap])
-        new_chunk["search_text"] = f"Глава: {section}. {' '.join(search_parts)}".strip()
+        new_chunk["search_text"] = f"Глава: {section}. {semantic_tag}. {' '.join(search_parts)}".strip()
         new_chunk["type"] = 'picture' if chunk.get("block_type") in ["PictureGroup", "FigureGroup"] else 'text'
 
         # Замена id

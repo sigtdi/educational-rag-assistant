@@ -119,6 +119,7 @@ class QdrantLoader:
                 "bbox":             chunk.get("bbox"),
                 "file_name":        chunk.get("file_name", ""),
                 "text":             chunk.get("text", ""),
+                "semantic_tag":     chunk.get("semantic_tag", ""),
             }
 
             if "image_path" in chunk:

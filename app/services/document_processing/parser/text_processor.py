@@ -114,7 +114,6 @@ class TextProcessor:
                     self._insert_fixed_fragments(chunk_index=index, vlm_text=vlm_text)
 
             if all(self.chunk_index_mask):
-                self._merge_lowercase_chunks()
                 log.info("Весь текст успешно проверен и исправлен.")
                 # Сохранение данных в файл и удаление изображений
                 self._save_final_document()
@@ -128,7 +127,6 @@ class TextProcessor:
                 self.remaining_chunks = self.chunk_index_mask.count(0)
                 log.warning(f"Остались неисправленные чанки. Еще повторных попыток {self._max_retries - attempt - 1}.")
         else:
-            self._merge_lowercase_chunks()
             log.error("Достигнуто максимальное количество попыток, но не все чанки исправлены.")
             # Сохранение данных в файл и удаление изображений
             self._save_final_document()
@@ -431,33 +429,6 @@ class TextProcessor:
         text = vlm_text['result'].text
         self.text_chunks[chunk_index]['text'] = text
         self.chunk_index_mask[chunk_index] = 1
-
-    def _merge_lowercase_chunks(self):
-        to_delete = set()
-        last_text_idx = None
-
-        log.info('Объединение абзацев, разделенных переносом')
-        for i, chunk in enumerate(tqdm(self.text_chunks, 'Удаление переносов')):
-            if chunk['block_type'] == 'Text' and i not in to_delete:
-                if chunk['text'] and chunk['text'][0].islower() and last_text_idx is not None:
-                    prev_chunk = self.text_chunks[last_text_idx]
-                    prev_text = prev_chunk['text']
-                    curr_text = chunk['text']
-
-                    stripped = prev_text.rstrip(' ')
-                    if stripped.endswith('-'):
-                        prev_chunk['text'] = stripped[:-1] + curr_text
-                    else:
-                        prev_chunk['text'] = stripped + ' ' + curr_text
-
-                    to_delete.add(i)
-                else:
-                    last_text_idx = i
-
-        self.text_chunks = [
-            chunk for i, chunk in enumerate(self.text_chunks)
-            if i not in to_delete
-        ]
 
     def _update_stats(self, total_time: float):
         self.process_document_data['total_failed_chunks'] = self.chunk_index_mask.count(0)

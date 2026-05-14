@@ -12,6 +12,9 @@ class ChunkerConfig:
     has_suffix: bool # К имени документа нужно добавить суффикс
     suffix: str
 
+    # Настройки модели
+    model_name: str
+
     # Директории
     output_dir: str | Path
     input_dir: Path

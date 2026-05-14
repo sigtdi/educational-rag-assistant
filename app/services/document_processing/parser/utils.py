@@ -16,21 +16,40 @@ def answer_fixer(ai_message):
             text = wrap_latex(text)
             json_content['text'] = text
 
+
         elif p_type == 'image_processor':
-            text = fix_unicode_in_latex(json_content["description"])
+
+            def process_text_field(raw_text):
+                if not raw_text:
+                    return raw_text
+
+                t = fix_unicode_in_latex(raw_text)
+                t = latex_fixer(t)
+                t = backslash_fixer(t)
+                t = wrap_latex(t)
+
+                return t
+
+            # Обрабатываем описание, если оно есть
+            if json_content.get("description"):
+                json_content["description"] = process_text_field(json_content["description"])
+
+            # Обрабатываем дословный контент (код/таблицы), если он есть
+            if json_content.get("exact_content"):
+                json_content["exact_content"] = process_text_field(json_content["exact_content"])
+
+            # Обрабатываем список ключевых элементов
+            if json_content.get("key_elements"):
+                json_content["key_elements"] = [
+                    process_text_field(elem) for elem in json_content["key_elements"]
+                ]
+
+        elif p_type == 'chunk_processor':
+            text = fix_unicode_in_latex(json_content['meaning'])
             text = latex_fixer(text)
             text = backslash_fixer(text)
             text = wrap_latex(text)
-            json_content["description"] = text
-
-            elems = []
-            for elem in json_content['key_elements']:
-                text = fix_unicode_in_latex(elem)
-                text = latex_fixer(text)
-                text = backslash_fixer(text)
-                text = wrap_latex(text)
-                elems.append(text)
-            json_content['key_elements'] = elems
+            json_content['meaning'] = text
 
         # Превращаем словарь в строку
         parts = []
@@ -60,17 +79,27 @@ def get_content_from_ai_message(ai_message):
     json_body = json_content[start_bracket:end_bracket + 1]
 
     # Обработка ответа генератора описаний image_processor
-    if "description" in json_body and "key_elements" in json_body:
-        desc_match = re.search(r'"description"\s*:\s*"(.*?)"\s*,\s*"key_elements"', json_body, re.DOTALL)
+    if "image_type" in json_body:
+        type_match = re.search(r'"image_type"\s*:\s*"(.*?)"', json_body)
+        exact_match = re.search(r'"exact_content"\s*:\s*"(.*?)"(?=\s*,\s*"\w+"\s*:|\s*\})', json_body, re.DOTALL)
+        desc_match = re.search(r'"description"\s*:\s*"(.*?)"(?=\s*,\s*"\w+"\s*:|\s*\})', json_body, re.DOTALL)
         elements_match = re.search(r'"key_elements"\s*:\s*\[(.*?)\]', json_body, re.DOTALL)
 
+        image_type = type_match.group(1) if type_match else ""
+        exact_content = exact_match.group(1) if exact_match else ""
         description = desc_match.group(1) if desc_match else ""
+
         elements = []
         if elements_match:
             raw_elements = elements_match.group(1)
             elements = [e.strip().strip('"').strip("'") for e in raw_elements.split(',') if e.strip()]
 
-        return { "description": description, "key_elements": elements }, 'image_processor'
+        return {
+            "image_type": image_type,
+            "exact_content": exact_content,
+            "description": description,
+            "key_elements": elements
+        }, 'image_processor'
 
     # Обработка ответа текстового редактора text_processor
     elif "text" in json_body:
@@ -80,6 +109,15 @@ def get_content_from_ai_message(ai_message):
         text_content = json_content[start_idx:end_idx]
 
         return {"text": text_content}, 'text_processor'
+
+    elif "meaning" in json_body:
+        meaning_match = re.search(r'"meaning"\s*:\s*"(.*?)"', json_body)
+        category_match = re.search(r'"category"\s*:\s*"(.*?)"(?=\s*,\s*"\w+"\s*:|\s*\})', json_body, re.DOTALL)
+
+        meaning = meaning_match.group(1) if meaning_match else None
+        category = category_match.group(1) if category_match else None
+
+        return {"meaning": meaning, "category": category}, 'chunk_processor'
 
     return json_body, 'error'
 

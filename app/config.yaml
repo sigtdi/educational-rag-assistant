@@ -6,7 +6,7 @@ _shared:
     qdrant_host: "localhost"
     qdrant_port: 6333
     qdrant_url:  ""           # если задан — host/port игнорируются
-    collection_name:     "chunks"
+    collection_name:     "educational-rag-assistant-collection"
     dense_vector_name:   "fast-multilingual-e5-large-instruct"
     sparse_vector_name:  "fast-sparse-bm25"
 
@@ -18,16 +18,16 @@ _shared:
 # Главный оркестратор
 pipeline:
   # Какие этапы выполнять
-  run_parser:  true
-  run_chunker: false
+  run_parser:  false
+  run_chunker: true
   run_loader:  false
 
 # Парсер
 parser:
   # Какие этапы выполнять
   process_marker: false     # false → нужен готовый output_marker_processor
-  process_text:   true
-  process_image:  false
+  process_text:   false
+  process_image:  true
   one_step:       false     # true → каждый этап берёт данные только из marker-output
 
   # Модель
@@ -39,6 +39,7 @@ parser:
 
 # Чанкер
 chunker:
+  model_name: 'qwen3.5:4b'
   save_intermediate: true
 
 # Загрузчик
@@ -57,14 +58,14 @@ retriever:
   embedding_query_instruction: "Instruct: Найди релевантные фрагменты учебника по алгоритмам\nQuery:"
 
   reranker_model_name: "DiTy/cross-encoder-russian-msmarco"
-  reranker_score_threshold: 0.0
+  reranker_score_threshold: 0.25
 
-  top_k_fetch: 10
-  top_k_final: 5
+  top_k_fetch: 30
+  top_k_final: 3
 
   group_expand_score_threshold: 0.5
 
 # Агент
 agent:
-  model_name: "qwen2.5:14b"
-  temperature: 0.0
+  model_name: "qwen3.5:9b"
+  temperature: 0.2

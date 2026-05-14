@@ -6,7 +6,7 @@ import subprocess
 import gc
 from tqdm import tqdm
 from pathlib import Path
-from typing import List, Literal, Any
+from typing import List, Literal, Any, Optional
 from pydantic import BaseModel, Field
 from pylatexenc.latexwalker import LatexWalker
 from time import time
@@ -24,63 +24,75 @@ class ImageOutput(BaseModel):
     """
     Схема выходных данных от VLM
     """
-    description: str = Field(
-        description="Содержательное описание изображения на русском языке (100-800) символов.",
-        min_length=50,
-        max_length=1200
-    )
 
-    key_elements: List[str] = Field(
-        description="Ключевые элементы изображения (вершины, рёбра, подписи, стрелки и т.д.)",
-        default_factory=list
+    image_type: Literal["schema", "code", "table"] = Field(
+        description="Тип изображения: schema (граф, дерево, схема), code (псевдокод) или table (таблица)."
+    )
+    exact_content: Optional[str] = Field(
+        default=None,
+        description="Заполняется ТОЛЬКО если image_type это 'code' или 'table'. Дословный перенос текста кода или таблицы в формате Markdown."
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="Заполняется ТОЛЬКО если image_type это 'schema'. Подробное описание структуры изображения."
+    )
+    key_elements: Optional[List[str]] = Field(
+        default=None,
+        description="Заполняется ТОЛЬКО если image_type это 'schema'. Список ключевых элементов (узлы, связи и т.д.)."
     )
 
     class ConfigDict:
-        schema_extra = {
+        json_schema_extra = {
             "examples": [
                 {
+                    "image_type": "schema",
+                    "exact_content": None,
                     "description": (
-                        "Ориентированный граф G с 6 вершинами и 8 рёбрами. Вершины обозначены буквами A, B, C, D, E, F. "
-                        "Рёбра показаны стрелками с указанием весов: (A, B, 4), (A, C, 2), (B, C, 1), (B, D, 5), "
-                        "(C, D, 8), (C, E, 10), (D, E, 2), (E, F, 6). Граф иллюстрирует задачу поиска кратчайшего пути. "
-                        "Вершина A выделена как стартовая, F как конечная."
+                        "Сбалансированное бинарное дерево поиска (BST) с 7 узлами. Корень — вершина с ключом 15. "
+                        "Левое поддерево содержит узлы 10 и 5, 12; правое — 20 и 18, 25. Все узлы белого цвета, "
+                        "связи обозначены тонкими линиями. Дерево демонстрирует идеальную балансировку по высоте, "
+                        "где для каждого узла $|height(left) - height(right)| \\le 1$."
                     ),
                     "key_elements": [
-                        "6 вершин (A, B, C, D, E, F)",
-                        "8 взвешенных рёбер",
-                        "ориентированные стрелки",
-                        "веса рёбер",
-                        "выделенные стартовая и конечная вершины"
+                        "корень: 15",
+                        "7 узлов (5, 10, 12, 15, 18, 20, 25)",
+                        "свойство BST выдержано",
+                        "сбалансированная структура"
                     ]
                 },
                 {
-                    "description": (
-                        "Двоичное дерево поиска (BST) с корнем 50. Левое поддерево содержит значения меньше корня: 30, "
-                        "20, 40, 35. Правое поддерево содержит значения больше корня: 70, 60, 80, 75. Все узлы "
-                        "представлены кружками с числами внутри.Стрелки показывают связи родитель-потомок. "
-                        "Дерево сбалансировано на глубину 4."
+                    "image_type": "code",
+                    "exact_content": (
+                        "```python\ndef fast_power(a, n):\n    res = 1\n    while n > 0:\n        "
+                        "if n % 2 == 1:\n            res *= a\n        a *= a\n        n //= 2\n    return res\n"
+                        "```"
                     ),
-                    "key_elements": [
-                        "корень со значением 50",
-                        "9 узлов всего",
-                        "левое и правое поддеревья",
-                        "стрелки от родителей к потомкам",
-                        "свойство BST сохранено"
-                    ]
+                    "description": None,
+                    "key_elements": None
                 },
                 {
+                    "image_type": "table",
+                    "exact_content": (
+                        "| i | f[i] | v[i] | w[i] |\n|---|---|---|---|\n| 0 | 0 | 0 | 0 |\n| 1 | 10 | 5 | 2 |\n"
+                        "| 2 | 20 | 10 | 4 |\n| 3 | 25 | 12 | 5 |"
+                    ),
+                    "description": None,
+                    "key_elements": None
+                },
+                {
+                    "image_type": "schema",
+                    "exact_content": None,
                     "description": (
-                        "Граф состояний конечного автомата для распознавания строк вида (ab)*. Пять состояний: q0 "
-                        "(начальное), q1, q2 (принимающее), q3 (ошибка). Переходы обозначены стрелками с метками "
-                        "символов: (q0, q1, a), (q1, q2, 'b'), (q2, q0, 'ε'). Любые другие символы ведут в q3. "
-                        "Принимающее состояние q2 выделено двойным кружком. Стрелка входа указывает на q0."
+                        "Неориентированный связный граф, представляющий сеть дорог. Содержит 5 вершин (1-5) "
+                        "и 6 рёбер с весами. Иллюстрирует работу алгоритма Прима для поиска MST. "
+                        "Рёбра (1,2) с весом 3 и (2,3) с весом 1 выделены жирным синим цветом, показывая текущий "
+                        "этап построения остовного дерева."
                     ),
                     "key_elements": [
-                        "5 состояний (q0, q1, q2, q3)",
-                        "переходы с метками символов",
-                        "начальное состояние q0",
-                        "принимающее состояние q2 (двойной круг)",
-                        "состояние ошибки q3"
+                        "5 нумерованных вершин",
+                        "6 взвешенных рёбер",
+                        "выделение цветом (синий)",
+                        "индикация алгоритма Прима"
                     ]
                 }
             ]
@@ -143,11 +155,7 @@ class ImageProcessor:
             for index, context, chunk in tqdm(self._get_image_context, total=self.remaining_chunks,
                                               desc='Генерация описаний'):
                 vlm_answer = self._description_generation_via_vlm(chunk['id'], chunk['text'], context, chunk['image_path'])
-                is_valid = self._validate_chunk(vlm_answer=vlm_answer['result'])
-
-                if not is_valid or vlm_answer['status'] == 'error':
-                    continue
-
+                print(vlm_answer)
                 self._insert_image_data(chunk_index=index, vlm_answer=vlm_answer['result'])
 
             if all(self.chunk_index_mask):
@@ -203,15 +211,21 @@ class ImageProcessor:
         if self._prompt is None:
             self._prompt = ChatPromptTemplate([
                 ("system", (
-                "Ты эксперт по описанию изображений из учебников по алгоритмам и структурам данных. "
-                "Твоя задача: создать точное и подробное описание для студентов, изучающих алгоритмы. "
-                "Для описания используй только русский язык, уложись в 100-800 символов. Если будешь использовать "
-                "математические выражения, записывай их в latex. Двигайся по шагам, определи тип изображения "
-                "(граф, дерево, блок-схема и т.д.); структуру (количество вершин/узлов, связи); ключевые элементы"
-                "(веса, метки, выделения); назначение (что иллюстрирует).\nДля графов описывай ориентированность,"
-                "особенности (циклы, связность, выделенные вершины), веса (если есть), количество вершин и рёбер.\n"
-                "Для деревьев описывай тип (бинарное, B-дерево, красно-черное и т.д.), корень и структуру, свойства "
-                "(сбалансированность, свойство поиска) и т.д..\n{format_instructions}."
+                    "Ты эксперт по анализу изображений из учебников по алгоритмам и структурам данных. "
+                    "Твоя задача: предоставить точное представление содержимого картинки для студентов. "
+                    "Для ответа используй только русский язык. Все математические выражения записывай строго в LaTeX.\n\n"
+                    "Сначала проанализируй изображение и определи его тип (image_type). В зависимости от типа действуй по одному из сценариев:\n\n"
+                    "СЦЕНАРИЙ 1: image_type = 'code' (Псевдокод или исходный код)\n"
+                    "Не описывай код словами! Помести дословный транскрипт кода с сохранением отступов в поле 'exact_content', обернув его в Markdown-блок. "
+                    "Поля 'description' и 'key_elements' оставь пустыми (null).\n\n"
+                    "СЦЕНАРИЙ 2: image_type = 'table' (Таблица)\n"
+                    "Не описывай таблицу! Воспроизведи её содержимое дословно в формате Markdown-таблицы в поле 'exact_content'. "
+                    "Поля 'description' и 'key_elements' оставь пустыми (null).\n\n"
+                    "СЦЕНАРИЙ 3: image_type = 'schema' (Схема, граф, дерево и т.д.)\n"
+                    "Заполни поля 'description' и 'key_elements'. Поле 'exact_content' оставь пустым (null). "
+                    "В 'description' создай точное описание (100-800 символов): структура (количество вершин/узлов, связи); назначение. "
+                    "Для графов: ориентированность, циклы, связность, веса. Для деревьев: тип (B-дерево и т.д.), корень, свойства.\n\n"
+                    "{format_instructions}"
                 )),
                 ("human", [
                     {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,{image_base64}"}},
@@ -367,6 +381,8 @@ class ImageProcessor:
         return {'result': None, 'status': 'error'}
 
     def _insert_image_data(self, chunk_index: int, vlm_answer):
+        image_type = vlm_answer.image_type
+        exact_content = vlm_answer.exact_content
         description = vlm_answer.description
         key_elements = vlm_answer.key_elements
 
@@ -375,8 +391,12 @@ class ImageProcessor:
 
         self.process_document_data['described_images'] += 1
 
-        kw_str = f". Ключевые слова: {', '.join(key_elements)}" if key_elements else ""
-        insert = f"![{caption}]({description}{kw_str})"
+        if image_type == "schema":
+            kw_str = f". Ключевые слова: {', '.join(key_elements)}" if key_elements else ""
+            insert = f"![{caption}]({description}{kw_str})"
+        else:
+            insert = f"![{caption}]({exact_content})"
+
         self.text_chunks[chunk_index]['text'] = insert
         self.chunk_index_mask[chunk_index] = 1
 
@@ -405,25 +425,3 @@ class ImageProcessor:
             image_bytes = file.read()
 
         return base64.b64encode(image_bytes).decode('utf-8')
-
-    @staticmethod
-    def _validate_chunk(vlm_answer) -> bool:
-        """
-        Проверка сгенерированных описаний.
-        """
-        description = vlm_answer.description
-
-        latex_blocks = re.findall(r'\$(.*?)\$', description)
-        is_valid = True
-
-        for block in latex_blocks:
-            if not block.strip():
-                continue
-
-            try:
-                LatexWalker(block).get_latex_nodes()
-                is_valid *= True
-            except Exception:
-                is_valid *= False
-
-        return is_valid

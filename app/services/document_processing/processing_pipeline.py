@@ -80,7 +80,7 @@ class ProcessingPipeline:
         return cls(config)
 
 
-    def run(self) -> PipelineStats:
+    def run(self) -> None:
         """
         Запуск обработки: один файл или всю папку.
         """
@@ -89,7 +89,7 @@ class ProcessingPipeline:
         pdf_files = self._collect_files()
         if not pdf_files:
             log.warning(f"PDF-файлы не найдены в {Paths.data}")
-            return self.pipeline_stats
+            return
 
         log.info(f"Найдено файлов для обработки: {len(pdf_files)}")
         self.pipeline_stats.total_documents = len(pdf_files)
@@ -101,7 +101,6 @@ class ProcessingPipeline:
         self.pipeline_stats.total_duration_seconds = round(time() - total_start, 2)
 
         self._log_summary()
-        return self.pipeline_stats
 
     def get_stats(self) -> PipelineStats:
         return self.pipeline_stats
@@ -243,9 +242,9 @@ class ProcessingPipeline:
 
 if __name__ == "__main__":
     # Один файл
-    pipeline = ProcessingPipeline.from_yaml(document_name="Alg-graphs-full.pdf")
+    #pipeline = ProcessingPipeline.from_yaml(document_name="Aho_A_Hopkroft_Dzh_Ulman_Dzh_Postroenie_i_analiz_vychislitelnyh_algoritmov.pdf")
     # Все файлы в папке
-    # pipeline = ProcessingPipeline.from_yaml()
+    pipeline = ProcessingPipeline.from_yaml()
 
-    stats = pipeline.run()
+    pipeline.run()
     pipeline.save_stats()
