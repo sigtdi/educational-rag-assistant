@@ -189,9 +189,6 @@ QUERY_DOC_PAIRS: list[dict] = [
 ]
 
 
-
-# МОДЕЛИ — обёртки
-
 @dataclass
 class EmbedModel:
     name: str
@@ -226,13 +223,13 @@ def load_model(model_id: str) -> EmbedModel | None:
     cfg = MODELS[model_id]
     loader = MODEL_LOADERS.get(cfg["type"])
     if loader is None:
-        print(f"  [SKIP] Неизвестный тип модели: {cfg['type']}")
+        print(f"  Неизвестный тип модели: {cfg['type']}")
         return None
     try:
-        print(f"  Загрузка {cfg['name']}...")
+        print(f"  Загрузка {cfg['name']}")
         return loader(cfg)
     except Exception as e:
-        print(f"  [ERROR] Не удалось загрузить {cfg['name']}: {e}")
+        print(f"  Не удалось загрузить {cfg['name']}: {e}")
         return None
 
 
@@ -325,7 +322,6 @@ def test_retrieval_recall(
 
 
 # Тест 3: Семантическая связность внутри раздела
-
 def test_intra_section_coherence(model: EmbedModel, chunks: list[dict]) -> TestResult:
     """
     Для каждого раздела (section_path) считаем среднюю попарную косинусную
@@ -370,7 +366,6 @@ def test_intra_section_coherence(model: EmbedModel, chunks: list[dict]) -> TestR
 
 
 # Тест 4: Межсекционное разделение (inter/intra ratio)
-
 def test_inter_intra_ratio(model: EmbedModel, chunks: list[dict]) -> TestResult:
     """
     Отношение средней внутрисекционной близости к межсекционной.
@@ -424,7 +419,6 @@ def test_inter_intra_ratio(model: EmbedModel, chunks: list[dict]) -> TestResult:
 
 
 # Тест 5: Устойчивость к перефразированию
-
 PARAPHRASE_PAIRS = [
     ("граф с направленными рёбрами", "ориентированный граф — пара вершин и дуг"),
     ("обход вершин графа в глубину", "рекурсивный алгоритм DFS"),
@@ -549,7 +543,6 @@ def run_all(model_ids: list[str] | None = None) -> list[TestResult]:
     return all_results
 
 
-
 # СВОДНАЯ ТАБЛИЦА
 def print_summary(results: list[TestResult]) -> None:
     """Сводная таблица ключевых метрик по всем моделям."""
@@ -601,7 +594,6 @@ def print_summary(results: list[TestResult]) -> None:
     print("  i/i_ratio   — intra/inter ratio по разделам (выше = лучше)")
     print("  para_sim    — близость перефразов (выше = лучше)")
     print("  neg_sim     — близость нерелевантных пар (ниже = лучше)")
-
 
 
 # СОХРАНЕНИЕ РЕЗУЛЬТАТОВ
