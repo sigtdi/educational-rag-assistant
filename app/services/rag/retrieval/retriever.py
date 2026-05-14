@@ -141,7 +141,16 @@ class HybridRetriever:
         """
         Гибридный поиск.
         """
-        docs = self._vector_store.similarity_search(query, k=k)
+        search_filter = Filter(
+            must=[
+                FieldCondition(
+                    key="metadata.is_searchable",
+                    match=MatchValue(value=True),
+                )
+            ]
+        )
+
+        docs = self._vector_store.similarity_search(query, k=k, filter=search_filter)
         for doc in docs:
             point_id = doc.metadata.pop("_id", None) or doc.metadata.get("id", "")
             doc.metadata["id"] = str(point_id)
@@ -168,12 +177,7 @@ class HybridRetriever:
                 self.config.reranker_score_threshold is not None
                 and score < self.config.reranker_score_threshold
             ):
-                log.debug(
-                    "Filtered out chunk (score=%.3f < %.3f): %s",
-                    score,
-                    self.config.reranker_score_threshold,
-                    doc.metadata.get("id", ""),
-                )
+                log.debug(f'Чанк отфильтрован: {score:.3f} < {self.config.reranker_score_threshold}; {doc.metadata.get("id", "")}')
                 continue
             result.append(ChunkResult.from_document(doc, rerank_score=score))
             if len(result) >= self.config.top_k_final:
@@ -296,39 +300,144 @@ if __name__ == "__main__":
     retriever = HybridRetriever.from_yaml()
 
     queries = [
-        "Что такое ориентированный граф?",
-        "Как работает алгоритм Дейкстры?",
-        "Чем отличается обход в глубину от обхода в ширину?",
-        "Что такое минимальное остовное дерево?",
-        "Как найти сообщество в социальной сети с помощью максимального потока?",
+        "Основная теорема о рекуррентных соотношениях метод декомпозиции.",
+        "Оценка сложности алгоритмов типа разделяй и властвуй.",
+        "Решение уравнения $T(n) = aT(n/b) + f(n)$.",
+
+        "Определение и пять условий красно-черного дерева.",
+        "Сбалансированное бинарное дерево поиска с цветовыми метками узлов и черной высотой.",
+        "Ограничение высоты дерева через количество узлов как $h \\le 2\\log(n+1)$.",
+
+        "Префикс-функция в алгоритме КМП.",
+        "Поиск подстроки в строке с использованием таблицы сдвигов по префиксам.",
+        "Вычисление значений $\\pi[q] = \\max \\{k : k < q \\text{ и } P_k \\sqsupset P_q\\}$.",
+
+        "Алгоритм пирамидальной сортировки и свойства кучи.",
+        "Поддержание основного свойства невозрастающего (или неубывающего) дерева в массиве.",
+        "Время работы процедуры $MAX-HEAPIFY$ для узла на высоте $h$.",
+
+        "Поиск кратчайших путей из одной вершины в графе.",
+        "Жадный алгоритм для нахождения минимального расстояния в графе с неотрицательными весами ребер.",
+        "Релаксация ребра $(u, v)$ через условие $d[v] > d[u] + w(u, v)$.",
+
+        "Редакционное расстояние между строками и операции редактирования.",
+        "Минимальное количество замен, вставок и удалений для трансформации одной последовательности в другую.",
+        "Формула динамического программирования $D(i, j) = \\min \\{D(i-1, j)+1, D(i, j-1)+1, D(i-1, j-1)+m(a_i, b_j)\\}$.",
+
+        "Методы разрешения коллизий при помощи линейного или квадратичного исследования.",
+        "Заполнение хеш-таблицы без использования связанных списков.",
+        "Функция пробирования вида $h(k, i) = (h'(k) + i) \\pmod m$.",
+
+        "Нахождение максимального потока в транспортной сети.",
+        "Метод увеличивающих путей и остаточных сетей в графе.",
+        "Теорема о максимальном потоке и минимальном разрезе $|f| = c(S, T)$.",
+
+        "Структура и свойства B-дерева для внешних систем памяти.",
+        "Многоходовое сбалансированное дерево поиска с заданным минимальным ветвлением.",
+        "Условие на количество ключей в узле $t-1 \\le n[x] \\le 2t-1$.",
+
+        "Поиск кратчайших путей в графах с отрицательными весами ребер.",
+        "Алгоритм обнаружения циклов отрицательного веса из заданного источника.",
+        "Итеративная проверка условия $d[v] \\le d[u] + w(u, v)$ для всех $E$ ребер.",
+
+        "Построение суффиксного дерева для строки.",
+        "Сжатое дерево всех суффиксов заданной последовательности символов.",
+        "Алгоритм Укконена для построения структуры за время $O(n)$.",
+
+        "Определение и операции над биномиальными очередями с приоритетами.",
+        "Объединение набора биномиальных деревьев с логарифмическим временем работы.",
+        "Количество узлов в дереве $B_k$ равное $2^k$.",
+
+        "Нахождение кратчайших путей между всеми парами вершин графа.",
+        "Метод динамического программирования для вычисления матрицы расстояний.",
+        "Обновление значений по формуле $d_{ij}^{(k)} = \\min(d_{ij}^{(k-1)}, d_{ik}^{(k-1)} + d_{kj}^{(k-1)})$.",
+
+        "Метод потенциалов и бухгалтерский метод оценки сложности.",
+        "Среднее время выполнения последовательности операций в худшем случае.",
+        "Определение амортизированной стоимости как $\\hat{c}_i = c_i + \\Phi(D_i) - \\Phi(D_{i-1})$.",
+
+        "Метод быстрой сортировки с выбором опорного элемента.",
+        "Разделение массива на две части относительно пивота (partitioning)",
+        "Математическое ожидание времени работы при случайном выборе $E[T(n)] = O(n \\log n)$",
+
+        "Структура данных \'Лес непересекающихся множеств\'.",
+        "Операции объединения по рангу и сжатия путей.",
+        "Оценка сложности через обратную функцию Аккермана $\\alpha(n)$.",
+
+        "Определение класса NP-полных задач и полиномиальная сводимость.",
+        "Задачи, к которым сводится любая задача из класса NP за полиномиальное время?",
+        "Теорема Кука-Левина о выполнимости булевых формул ($SAT$).",
+
+        "Поиск подстроки с использованием эвристики «плохого символа» и «хорошего суффикса»",
+        "Алгоритм быстрого сопоставления строк путем сканирования символов справа налево",
+        "Сдвиг шаблона на основе функции $\\gamma(j)$ и таблицы стоп-символов",
+
+        "Алгоритмы комбинаторной генерации всех перестановок множества",
+        "Построение лексикографического порядка последовательностей элементов",
+        "Формула общего количества перестановок для $n$ элементов: $n!$",
+
+        "Построение минимального остовного дерева на основе сортировки ребер",
+        "Жадный алгоритм добавления ребер минимального веса, не образующих цикла",
+        "Использование DSU для проверки связности компонент $find-set(u) \\neq find-set(v)$",
     ]
 
-    for query in queries:
-        print("\n" + "=" * 70)
-        print(f"ЗАПРОС: {query}")
-        print("=" * 70)
+    BATCH_SIZE = 6
 
-        result = retriever.search(query)
+    for i in range(0, len(queries), BATCH_SIZE):
+        batch = queries[i: i + BATCH_SIZE]
+        group_idx = (i // BATCH_SIZE) + 1
+        filename = f"search_results_group_{group_idx}.txt"
 
-        print(f"\n── Топ чанки ({len(result.top_chunks)}):")
-        for c in result.top_chunks:
-            marker = "[🖼 picture]" if c.is_picture else "[text]"
-            score_str = f" score={c.rerank_score:.3f}" if c.rerank_score is not None else ""
-            print(f"  {marker} [{c.section_header}]{score_str}")
-            print(f"         {c.text.strip()}")
+        with open(filename, "w", encoding="utf-8") as f:
 
-        print(f"\n── Чанки групп ({len(result.group_chunks)} доп.):")
-        for c in result.group_chunks:
-            marker = "[picture]" if c.is_picture else "[text]"
-            print(f"  {marker} [{c.section_header}] {c.text.strip()}")
+            for query in batch:
+                print(f"Обработка запроса: {query}")
+                result = retriever.search(query)
 
-        if result.mentioned_chunks:
-            print(f"\n── Упомянутые объекты ({len(result.mentioned_chunks)}):")
-            for c in result.mentioned_chunks:
-                label = result.mentioned_labels.get(c.id, "")
-                marker = "[picture]" if c.is_picture else "[text]"
-                print(f"  {marker} «{label}»: {c.text.strip()}")
-                if c.is_picture and c.image_path:
-                    print(f"         image: {c.image_path}")
-        else:
-            print("\n── Упомянутые объекты: нет")
+                f.write("=" * 70)
+                f.write(f"\nЗАПРОС: {query}\n")
+                f.write("=" * 70 + "\n")
+                f.write('Список чанков для ответа:')
+
+                # Сохраняем топ-30 чанков для разметки нейронкой
+                for c in result.top_chunks:
+                    f.write("-" * 30 + "\n")
+                    f.write(f"CHUNK_ID: {c.id}\n")
+                    f.write(f"CONTENT:\n{c.text.strip()}\n")
+                    f.write("-" * 30 + "\n")
+                    f.write('\n')
+
+                f.write("\n" + "#" * 70 + "\n")
+
+        print(f"Готово! Результаты группы {group_idx} сохранены в {filename}")
+
+    # for query in queries:
+    #     print("\n" + "=" * 70)
+    #     print(f"ЗАПРОС: {query}")
+    #     print("=" * 70)
+    #
+    #     result = retriever.search(query)
+
+
+        # print(f"\n── Топ чанки ({len(result.top_chunks)}):")
+        # for c in result.top_chunks:
+        #     marker = "[🖼 picture]" if c.is_picture else "[text]"
+        #     score_str = f" score={c.rerank_score:.3f}" if c.rerank_score is not None else ""
+        #     print(f"  {marker} {c.id} [{c.section_header}]{score_str}")
+        #     print(f"         {c.text.strip()}")
+
+        # print(f"\n── Чанки групп ({len(result.group_chunks)} доп.):")
+        # for c in result.group_chunks:
+        #     marker = "[picture]" if c.is_picture else "[text]"
+        #     print(f"  {marker} [{c.section_header}] {c.text.strip()}")
+        #
+        # if result.mentioned_chunks:
+        #     print(f"\n── Упомянутые объекты ({len(result.mentioned_chunks)}):")
+        #     for c in result.mentioned_chunks:
+        #         label = result.mentioned_labels.get(c.id, "")
+        #         marker = "[picture]" if c.is_picture else "[text]"
+        #         print(f"  {marker} «{label}»: {c.text.strip()}")
+        #         if c.is_picture and c.image_path:
+        #             print(f"         image: {c.image_path}")
+        # else:
+        #     print("\n── Упомянутые объекты: нет")

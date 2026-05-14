@@ -242,9 +242,9 @@ class ProcessingPipeline:
 
 if __name__ == "__main__":
     # Один файл
-    #pipeline = ProcessingPipeline.from_yaml(document_name="Aho_A_Hopkroft_Dzh_Ulman_Dzh_Postroenie_i_analiz_vychislitelnyh_algoritmov.pdf")
+    pipeline = ProcessingPipeline.from_yaml(document_name="Lipskij V Kombinatorika dlja programmistov.pdf")
     # Все файлы в папке
-    pipeline = ProcessingPipeline.from_yaml()
+    #pipeline = ProcessingPipeline.from_yaml()
 
     pipeline.run()
     pipeline.save_stats()

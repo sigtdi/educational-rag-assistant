@@ -120,6 +120,7 @@ class QdrantLoader:
                 "file_name":        chunk.get("file_name", ""),
                 "text":             chunk.get("text", ""),
                 "semantic_tag":     chunk.get("semantic_tag", ""),
+                "is_searchable":    chunk.get("is_searchable", ""),
             }
 
             if "image_path" in chunk:

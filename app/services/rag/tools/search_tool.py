@@ -31,6 +31,9 @@ def make_rag_tool(retriever: HybridRetriever):
         - Для сравнения двух понятий вызови инструмент дважды —
           по одному запросу на каждое понятие.
         - Используй русскоязычные термины, латинские аббревиатуры можно добавить рядом.
+        - Для математических выражений, греческих и латинских букв используй LaTex-формат.
+          Хорошо: "асимптотические нотации $\\Omega$ $\\Theta$ нотации"
+          Плохо: "асимптотические нотации Ω Θ нотации"
 
         Args:
             query: ключевые термины для поиска на русском языке.
@@ -49,16 +52,14 @@ def _run_tests(tool) -> None:
     """Простые smoke-тесты инструмента."""
 
     test_queries = [
-        "алгоритм Дейкстры кратчайший путь",
-        "обход в ширину",
-        "построение максимального потока",
+        "суффиксный массив построение алгоритм",
     ]
 
     # Проверяем метаданные инструмента
-    print("=== Tool metadata ===")
-    print(f"  name        : {tool.name}")
-    print(f"  description : {tool.description}")
-    print(f"  args schema : {tool.args_schema.model_json_schema()}\n")
+    # print("=== Tool metadata ===")
+    # print(f"  name        : {tool.name}")
+    # print(f"  description : {tool.description}")
+    # print(f"  args schema : {tool.args_schema.model_json_schema()}\n")
 
     # Прогоняем тестовые запросы
     print("=== Search results ===")
@@ -68,8 +69,7 @@ def _run_tests(tool) -> None:
         try:
             # .invoke() — стандартный способ вызова LangChain tool
             result: str = tool.invoke({"query": query})
-            # Печатаем только первые 300 символов, чтобы не засорять вывод
-            print(f"  OK  → {result}")
+            print(result)
         except Exception as exc:
             print(f"  ERR → {exc}")
 
