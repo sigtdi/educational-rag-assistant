@@ -45,9 +45,7 @@ def format_search_result(result: SearchResult) -> str:
 
     for chunk in ordered_chunks:
         section = chunk.section_header or "Без раздела"
-        chunk_text = (
-            f"[Рисунок: {chunk.text.strip()}]" if chunk.is_picture else chunk.text.strip()
-        )
+        chunk_text = chunk.text.strip()
 
         if section != current_section:
             flush_section()

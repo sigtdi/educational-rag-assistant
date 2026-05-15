@@ -19,8 +19,8 @@ _shared:
 pipeline:
   # Какие этапы выполнять
   run_parser:  false
-  run_chunker: true
-  run_loader:  false
+  run_chunker: false
+  run_loader:  true
 
 # Парсер
 parser:
@@ -58,12 +58,12 @@ retriever:
   embedding_query_instruction: "Instruct: Найди релевантные фрагменты учебника по алгоритмам\nQuery:"
 
   reranker_model_name: "DiTy/cross-encoder-russian-msmarco"
-  reranker_score_threshold: 0.25
+  reranker_score_threshold: 0.15
 
-  top_k_fetch: 30
-  top_k_final: 3
+  top_k_fetch: 25
+  top_k_final: 5
 
-  group_expand_score_threshold: 0.5
+  group_expand_score_threshold: 0.4
 
 # Агент
 agent:
